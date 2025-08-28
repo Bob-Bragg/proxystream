@@ -1,19 +1,19 @@
-# 🎈 Blank app template
+cat > README.md << 'EOF'
+# ProxyStream
 
-A simple Streamlit app template for you to modify!
+Modern open-source VPN dashboard interface with integrated proxy management.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+## Live Demo
+- **Streamlit App**: [https://proxystream.streamlit.app](https://proxystream.streamlit.app)
+- **HTML Demo**: [https://bob-bragg.github.io/proxystream/demo/](https://bob-bragg.github.io/proxystream/demo/)
 
-### How to run it on your own machine
+## Features
+- Real Proxy Network: 3,691+ HTTPS proxies across 9 countries
+- Live Dashboard: Real-time metrics and performance monitoring
+- Modern UI: Glassmorphism design with smooth animations
+- Connection Management: One-click connect/disconnect
 
-1. Install the requirements
-
-   ```
-   $ pip install -r requirements.txt
-   ```
-
-2. Run the app
-
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+## Quick Start
+```bash
+pip install -r requirements.txt
+streamlit run streamlit_app.py
