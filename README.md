@@ -1,19 +1,25 @@
-cat > README.md << 'EOF'
 # ProxyStream
 
 Modern open-source VPN dashboard interface with integrated proxy management.
 
 ## Live Demo
 - **Streamlit App**: [https://proxystream.streamlit.app](https://proxystream.streamlit.app)
-- **HTML Demo**: [https://bob-bragg.github.io/proxystream/demo/](https://bob-bragg.github.io/proxystream/demo/)
+- **Repository**: [https://github.com/Bob-Bragg/proxystream](https://github.com/Bob-Bragg/proxystream)
 
 ## Features
-- Real Proxy Network: 3,691+ HTTPS proxies across 9 countries
-- Live Dashboard: Real-time metrics and performance monitoring
-- Modern UI: Glassmorphism design with smooth animations
-- Connection Management: One-click connect/disconnect
+
+- **Real Proxy Network**: 50+ HTTPS proxies across 9 countries
+- **Live Dashboard**: Real-time metrics, usage tracking, and performance monitoring  
+- **Modern UI**: Glassmorphism design with smooth animations
+- **Multi-Protocol**: HTTPS proxy support with country-based filtering
+- **Connection Management**: One-click connect/disconnect with status monitoring
+- **Data Visualization**: Interactive charts and world map integration
 
 ## Quick Start
+
 ```bash
+# Install dependencies
 pip install -r requirements.txt
+
+# Run application  
 streamlit run streamlit_app.py
