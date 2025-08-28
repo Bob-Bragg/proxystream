@@ -4,8 +4,6 @@ import random
 import time
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
-import requests
-from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -39,13 +37,6 @@ st.markdown("""
         align-items: center;
         justify-content: center;
         gap: 16px;
-    }
-    
-    .stream-text {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
     }
     
     .metric-card {
@@ -124,25 +115,32 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Load proxy list from data file
-@st.cache_data
-def load_proxy_list():
-    try:
-        with open('data/proxies.txt', 'r') as f:
-            return [line.strip() for line in f if line.strip() and ':' in line]
-    except FileNotFoundError:
-        # Fallback proxy list if file not found
-        return [
-            "34.121.105.79:80", "68.107.241.150:8080", "3.133.146.217:5050",
-            "72.10.160.90:13847", "170.85.158.82:80", "167.172.157.96:80",
-            "72.10.164.178:1771", "38.127.172.53:24171", "67.43.228.254:11859"
-        ]
-
-PROXY_LIST = load_proxy_list()
+# Proxy List from Proxy-Hound
+PROXY_LIST = [
+    "34.121.105.79:80", "68.107.241.150:8080", "3.133.146.217:5050",
+    "72.10.160.90:13847", "170.85.158.82:80", "170.85.158.82:10005",
+    "67.43.236.20:29915", "167.172.157.96:80", "72.10.164.178:1771",
+    "72.10.164.178:27495", "38.127.172.53:24171", "67.43.228.254:11859",
+    "67.43.228.253:4337", "170.106.169.97:3128", "130.41.109.158:8080",
+    "72.10.160.173:13909", "72.10.160.90:12347", "67.43.236.19:4999",
+    "72.10.160.90:20647", "72.10.160.172:7959", "67.43.236.19:18107",
+    "67.43.228.250:20689", "72.10.164.178:20035", "67.43.236.20:4999",
+    "72.10.160.171:28795", "3.133.221.69:3128", "201.174.239.25:8080",
+    "136.175.9.83:8084", "72.10.160.94:30069", "72.10.160.174:2387",
+    "72.10.160.173:25221", "72.10.160.170:3483", "136.175.9.82:8081",
+    "136.175.9.86:8082", "136.175.9.82:8085", "72.10.164.178:28483",
+    "67.43.228.251:26125", "72.10.160.90:13495", "67.43.228.253:15161",
+    "72.10.160.90:10529", "67.43.236.20:8011", "67.43.228.252:3187",
+    "72.10.160.90:5137", "72.10.164.178:26129", "72.10.160.170:15401",
+    "72.10.164.178:27479", "67.43.236.20:3407", "67.43.236.19:15237",
+    "67.43.236.20:11663", "72.10.160.170:9125", "67.43.228.250:3625",
+    "67.43.236.20:9579", "72.10.164.178:4381", "72.10.160.170:23569",
+    "72.10.160.174:24169", "72.10.160.90:1941", "155.94.241.134:3128"
+]
 
 # Country-to-IP mapping for geolocation simulation
 COUNTRY_IP_MAPPING = {
-    'US': ['34.121.105.79', '68.107.241.150', '3.133.146.217', '72.10.160.90', '170.85.158.82', '67.43.236.20', '167.172.157.96'],
+    'US': ['34.121.105.79', '68.107.241.150', '3.133.146.217', '72.10.160.90', '170.85.158.82'],
     'CA': ['72.10.164.178', '38.127.172.53', '67.43.228.254', '67.43.228.253'],
     'GB': ['170.106.169.97', '130.41.109.158', '155.94.241.134'],
     'DE': ['136.175.9.83', '136.175.9.82', '136.175.9.86'],
@@ -153,29 +151,26 @@ COUNTRY_IP_MAPPING = {
     'JP': ['67.43.228.252']
 }
 
-# Reverse mapping for IP to country lookup
+# Reverse mapping
 IP_TO_COUNTRY = {}
 for country, ips in COUNTRY_IP_MAPPING.items():
     for ip in ips:
         IP_TO_COUNTRY[ip] = country
 
 def get_country_flag(country_code: str) -> str:
-    """Get flag emoji for country code"""
     flags = {
         'US': '🇺🇸', 'CA': '🇨🇦', 'GB': '🇬🇧', 'DE': '🇩🇪', 
-        'FR': '🇫🇷', 'NL': '🇳🇱', 'SG': '🇸🇬', 'AU': '🇦🇺', 
-        'JP': '🇯🇵', 'ES': '🇪🇸', 'IT': '🇮🇹', 'CH': '🇨🇭'
+        'FR': '🇫🇷', 'NL': '🇳🇱', 'SG': '🇸🇬', 'AU': '🇦🇺', 'JP': '🇯🇵'
     }
     return flags.get(country_code, '🏳️')
 
 def parse_proxy_list() -> Dict[str, List[str]]:
-    """Parse the proxy list and organize by country"""
     proxies_by_country = {}
     
     for proxy in PROXY_LIST:
         if ':' in proxy:
             ip = proxy.split(':')[0]
-            country = IP_TO_COUNTRY.get(ip, 'US')  # Default to US if not found
+            country = IP_TO_COUNTRY.get(ip, 'US')
             
             if country not in proxies_by_country:
                 proxies_by_country[country] = []
@@ -184,12 +179,9 @@ def parse_proxy_list() -> Dict[str, List[str]]:
     return proxies_by_country
 
 def test_proxy_connection(proxy: str) -> tuple[bool, dict]:
-    """Test if a proxy is working (simplified simulation)"""
-    # Simulate network delay
     delay = random.uniform(0.5, 2.0)
     time.sleep(delay)
     
-    # Simulate success/failure with weighted probability
     is_success = random.choices([True, False], weights=[75, 25])[0]
     
     metrics = {
@@ -201,7 +193,6 @@ def test_proxy_connection(proxy: str) -> tuple[bool, dict]:
     return is_success, metrics
 
 def generate_usage_data():
-    """Generate sample usage data for the dashboard"""
     hours = pd.date_range(start=datetime.now()-timedelta(hours=24), end=datetime.now(), freq='H')
     download_data = np.random.exponential(scale=50, size=len(hours))
     upload_data = np.random.exponential(scale=20, size=len(hours))
@@ -276,7 +267,6 @@ def main():
             
             # Proxy Server Selection
             if country_proxies:
-                # Show top 10 servers for better UX
                 display_proxies = country_proxies[:10]
                 selected_proxy = st.selectbox(
                     "Proxy Server",
@@ -299,7 +289,6 @@ def main():
                                 st.rerun()
                             else:
                                 st.error("Connection failed - trying next server...")
-                                # Auto-retry with another server
                                 if len(display_proxies) > 1:
                                     backup_proxy = random.choice([p for p in display_proxies if p != selected_proxy])
                                     success, metrics = test_proxy_connection(backup_proxy)
@@ -337,7 +326,7 @@ def main():
 
     # Main Dashboard
     if st.session_state.proxy_connected:
-        # Connected state - show full dashboard
+        # Connected state
         col1, col2 = st.columns(2)
         
         with col1:
@@ -345,7 +334,6 @@ def main():
             st.success(f"🟢 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country}")
             st.info(f"Server: {st.session_state.current_proxy}")
             
-            # Connection quality indicators
             latency = st.session_state.proxy_metrics.get('latency', 0)
             speed = st.session_state.proxy_metrics.get('speed', 0)
             
@@ -356,16 +344,12 @@ def main():
             with col1b:
                 st.metric("Speed", f"{speed:.1f} Mbps", delta="Connected" if speed > 0 else None)
             
-            # World map visualization
+            # World map
             fig_map = go.Figure(data=go.Scattergeo(
                 lon=[-100 if st.session_state.selected_country == 'US' else 0],
                 lat=[40 if st.session_state.selected_country == 'US' else 50],
                 mode='markers',
-                marker=dict(
-                    size=20,
-                    color='#10b981',
-                    line=dict(width=3, color='white')
-                ),
+                marker=dict(size=20, color='#10b981', line=dict(width=3, color='white')),
                 showlegend=False,
                 text=[f"{st.session_state.selected_country} Server"],
                 hoverinfo='text'
@@ -373,18 +357,11 @@ def main():
             
             fig_map.update_layout(
                 geo=dict(
-                    showframe=False,
-                    showcoastlines=True,
-                    projection_type='natural earth',
-                    bgcolor='rgba(0,0,0,0)',
-                    landcolor='#374151',
-                    oceancolor='#1e293b',
-                    coastlinecolor='#6b7280'
+                    showframe=False, showcoastlines=True, projection_type='natural earth',
+                    bgcolor='rgba(0,0,0,0)', landcolor='#374151', oceancolor='#1e293b', coastlinecolor='#6b7280'
                 ),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                height=300,
-                margin=dict(l=0, r=0, t=0, b=0)
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                height=300, margin=dict(l=0, r=0, t=0, b=0)
             )
             
             st.plotly_chart(fig_map, use_container_width=True, config={'displayModeBar': False})
@@ -392,7 +369,6 @@ def main():
         with col2:
             st.markdown("### 📊 Data Usage")
             
-            # Simulate data usage increment
             if st.session_state.proxy_connected:
                 st.session_state.data_usage["download"] += random.uniform(0.01, 0.1)
                 st.session_state.data_usage["upload"] += random.uniform(0.005, 0.05)
@@ -410,38 +386,27 @@ def main():
             
             # Usage chart
             usage_df = generate_usage_data()
-            fig_usage = px.area(
-                usage_df, 
-                x='time', 
-                y=['download', 'upload'],
-                title="24h Traffic Pattern",
-                color_discrete_map={'download': '#667eea', 'upload': '#10b981'}
-            )
+            fig_usage = px.area(usage_df, x='time', y=['download', 'upload'], title="24h Traffic Pattern",
+                               color_discrete_map={'download': '#667eea', 'upload': '#10b981'})
             
             fig_usage.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font_color='white',
-                height=250,
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white',
+                height=250, showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             
             st.plotly_chart(fig_usage, use_container_width=True, config={'displayModeBar': False})
 
-        # Performance metrics row
+        # Performance metrics
         st.markdown("---")
         col3, col4, col5, col6 = st.columns(4)
         
         with col3:
             current_latency = st.session_state.proxy_metrics.get('latency', 0)
-            st.metric("Current Latency", f"{current_latency}ms", 
-                     delta=f"{random.randint(-5, 5)}ms")
+            st.metric("Current Latency", f"{current_latency}ms", delta=f"{random.randint(-5, 5)}ms")
         
         with col4:
             current_speed = st.session_state.proxy_metrics.get('speed', 0)
-            st.metric("Current Speed", f"{current_speed:.1f} Mbps", 
-                     delta=f"{random.uniform(-2, 5):.1f}")
+            st.metric("Current Speed", f"{current_speed:.1f} Mbps", delta=f"{random.uniform(-2, 5):.1f}")
         
         with col5:
             uptime = "99.9%" if st.session_state.proxy_connected else "0%"
@@ -452,36 +417,24 @@ def main():
             st.metric("Available Servers", f"{total_proxies:,}", delta=f"+{random.randint(5, 20)}")
 
     else:
-        # Disconnected state - show connection prompt
+        # Disconnected state
         st.markdown("### 🔌 Not Connected")
         
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             st.info("Select a country and proxy server from the sidebar to establish a secure connection.")
             
-            # Show network overview
             st.markdown("### 🌐 Network Overview")
             
-            # Create a simple chart showing available servers by country
             countries = list(proxy_data.keys())
             server_counts = [len(proxy_data[country]) for country in countries]
             
-            fig_network = px.bar(
-                x=countries,
-                y=server_counts,
-                title="Available Servers by Country",
-                color=server_counts,
-                color_continuous_scale="Viridis"
-            )
+            fig_network = px.bar(x=countries, y=server_counts, title="Available Servers by Country",
+                               color=server_counts, color_continuous_scale="Viridis")
             
             fig_network.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font_color='white',
-                height=300,
-                xaxis_title="Country",
-                yaxis_title="Server Count",
-                showlegend=False
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', font_color='white',
+                height=300, xaxis_title="Country", yaxis_title="Server Count", showlegend=False
             )
             
             st.plotly_chart(fig_network, use_container_width=True, config={'displayModeBar': False})
@@ -500,7 +453,7 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # Auto-refresh for live updates when connected (reduced frequency)
+    # Auto-refresh for live updates when connected
     if st.session_state.proxy_connected:
         time.sleep(3)
         st.rerun()
