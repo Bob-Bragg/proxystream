@@ -2,9 +2,10 @@ import json
 import os
 import random
 import time
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from datetime import datetime, timedelta
 from urllib.parse import urlparse, urlunparse
+import math
 
 import pandas as pd
 import streamlit as st
@@ -18,13 +19,13 @@ import socket
 
 # ProxyStream Configuration
 st.set_page_config(
-    page_title="ProxyStream - Modern VPN Dashboard",
+    page_title="ProxyStream - Advanced Proxy Testing Dashboard",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Theme/CSS (preserved)
+# Enhanced Theme/CSS
 st.markdown("""
 <style>
     .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); color: white; }
@@ -35,6 +36,10 @@ st.markdown("""
     .proxy-status-connected { color: #10b981; font-weight: bold; background: rgba(16,185,129,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(16,185,129,.2); }
     .proxy-status-disconnected { color: #ef4444; font-weight: bold; background: rgba(239,68,68,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(239,68,68,.2); }
     .proxy-status-warning { color: #f59e0b; font-weight: bold; background: rgba(245,158,11,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(245,158,11,.2); }
+    .location-card { background: rgba(255, 255, 255, 0.08); backdrop-filter: blur(10px); padding: 16px; border-radius: 12px;
+                     margin: 8px 0; border: 1px solid rgba(255, 255, 255, 0.15); }
+    .location-comparison { display: flex; justify-content: space-between; align-items: center; padding: 12px; 
+                          background: rgba(255, 255, 255, 0.05); border-radius: 8px; margin: 8px 0; }
     [data-testid="metric-container"] { background: rgba(255,255,255,.05); backdrop-filter: blur(10px);
         border: 1px solid rgba(255,255,255,.1); padding: 1.5rem; border-radius: 16px; margin: .5rem 0; }
     [data-testid="metric-container"] > div { color: white; }
@@ -46,6 +51,86 @@ st.markdown("""
     .security-warning { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding: 12px; border-radius: 8px; margin: 8px 0; }
 </style>
 """, unsafe_allow_html=True)
+
+# Enhanced Geolocation Functions
+@st.cache_data(ttl=1800, show_spinner=False)  # Cache for 30 minutes
+def get_user_location() -> Optional[Dict[str, Any]]:
+    """Detect user's real location using multiple services"""
+    services = [
+        'https://ipapi.co/json/',
+        'https://ip-api.com/json/',
+        'https://freegeoip.app/json/',
+    ]
+    
+    for service in services:
+        try:
+            response = requests.get(service, timeout=8)
+            if response.ok:
+                data = response.json()
+                # Normalize different API response formats
+                return {
+                    'ip': data.get('ip') or data.get('query'),
+                    'city': data.get('city'),
+                    'region': data.get('region') or data.get('regionName'),
+                    'country': data.get('country_name') or data.get('country'),
+                    'country_code': data.get('country_code') or data.get('countryCode'),
+                    'lat': data.get('latitude') or data.get('lat'),
+                    'lon': data.get('longitude') or data.get('lon'),
+                    'isp': data.get('org') or data.get('isp'),
+                    'timezone': data.get('timezone'),
+                    'postal': data.get('postal') or data.get('zip')
+                }
+        except Exception as e:
+            continue
+    return None
+
+@st.cache_data(ttl=3600, show_spinner=False)  # Cache for 1 hour
+def get_detailed_location(ip_address: str) -> Optional[Dict[str, Any]]:
+    """Get detailed location info for proxy IP"""
+    services = [
+        f'https://ipapi.co/{ip_address}/json/',
+        f'https://ip-api.com/json/{ip_address}',
+        f'https://freegeoip.app/json/{ip_address}'
+    ]
+    
+    for service in services:
+        try:
+            response = requests.get(service, timeout=8)
+            if response.ok:
+                data = response.json()
+                return {
+                    'ip': ip_address,
+                    'city': data.get('city'),
+                    'region': data.get('region') or data.get('regionName'),
+                    'country': data.get('country_name') or data.get('country'),
+                    'country_code': data.get('country_code') or data.get('countryCode'),
+                    'lat': data.get('latitude') or data.get('lat'),
+                    'lon': data.get('longitude') or data.get('lon'),
+                    'isp': data.get('org') or data.get('isp'),
+                    'timezone': data.get('timezone'),
+                    'postal': data.get('postal') or data.get('zip'),
+                    'as_number': data.get('asn') or data.get('as')
+                }
+        except Exception:
+            continue
+    return None
+
+def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate distance between two points using Haversine formula"""
+    if not all([lat1, lon1, lat2, lon2]):
+        return 0.0
+    
+    # Convert to radians
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+    
+    # Haversine formula
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+    r = 6371  # Earth's radius in kilometers
+    
+    return c * r
 
 # Dynamic proxy loader (preserved)
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -93,7 +178,7 @@ def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
     errors.append("All sources failed; using fallback seed list.")
     return fallback, "fallback", errors
 
-# Country mapping (preserved)
+# Country mapping (preserved but enhanced)
 COUNTRY_IP_MAPPING = {
     'US': ['34.121.105.79', '68.107.241.150', '3.133.146.217', '72.10.160.90', '170.85.158.82'],
     'CA': ['72.10.164.178', '38.127.172.53', '67.43.228.254', '67.43.228.253'],
@@ -172,12 +257,9 @@ def detect_proxy_capabilities(proxy_http_url: str, timeout: int = 8) -> Dict[str
     
     return caps
 
-# FIXED: Real proxy connection testing
+# Enhanced proxy connection testing with location detection
 def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
-    """
-    Actually test if a proxy is working by making real HTTP requests.
-    Returns (success, metrics_dict)
-    """
+    """Test proxy with enhanced location detection"""
     proxy_http = normalize_proxy_http(proxy)
     host, port = proxy.split(':')[0], int(proxy.split(':')[1])
     
@@ -190,7 +272,8 @@ def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
             'error': 'TCP connection failed - proxy unreachable',
             'http_ok': False,
             'https_ok': False,
-            'ip_detected': None
+            'ip_detected': None,
+            'location': None
         }
     
     # Test actual proxy capabilities
@@ -198,6 +281,9 @@ def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
     
     # Determine if proxy is usable
     is_working = caps["http_ok"] or caps["https_ok"]
+    
+    # Get detailed location for the proxy IP
+    proxy_location = get_detailed_location(host)
     
     # Calculate speed estimate (rough approximation based on latency)
     speed_estimate = 0
@@ -214,11 +300,12 @@ def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
     return is_working, {
         'latency': caps["latency_ms"],
         'speed': round(speed_estimate, 1),
-        'country': IP_TO_COUNTRY.get(host, 'US'),
+        'country': proxy_location.get('country', 'Unknown') if proxy_location else IP_TO_COUNTRY.get(host, 'US'),
         'error': caps.get("err_http", "") or caps.get("err_https", ""),
         'http_ok': caps["http_ok"],
         'https_ok': caps["https_ok"],
-        'ip_detected': caps.get("ip_http") or caps.get("ip_https")
+        'ip_detected': caps.get("ip_http") or caps.get("ip_https"),
+        'location': proxy_location
     }
 
 def generate_usage_data():
@@ -235,10 +322,96 @@ def generate_usage_data():
     })
 
 def coords_for_proxy(proxy_str: str, fallback_country: str = "US") -> Tuple[float, float, str]:
+    """Get coordinates - enhanced to use real location data when available"""
+    if 'proxy_location' in st.session_state and st.session_state.proxy_location:
+        loc = st.session_state.proxy_location
+        if loc.get('lat') and loc.get('lon'):
+            return float(loc['lat']), float(loc['lon']), loc.get('country_code', fallback_country)
+    
+    # Fallback to hardcoded mapping
     ip = proxy_str.split(":")[0] if ":" in proxy_str else None
     cc = IP_TO_COUNTRY.get(ip, fallback_country)
     lat, lon = COUNTRY_COORDS.get(cc, (0.0, 0.0))
     return lat, lon, cc
+
+def create_enhanced_map():
+    """Create map showing both user and proxy locations"""
+    fig = go.Figure()
+    
+    # Add user location if available
+    if 'user_location' in st.session_state and st.session_state.user_location:
+        user_loc = st.session_state.user_location
+        if user_loc.get('lat') and user_loc.get('lon'):
+            fig.add_trace(go.Scattergeo(
+                lon=[user_loc['lon']], lat=[user_loc['lat']],
+                mode='markers',
+                marker=dict(size=18, color='#ef4444', symbol='circle', 
+                          line=dict(width=2, color='white')),
+                name='Your Real Location',
+                text=[f"You: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}"],
+                hoverinfo='text'
+            ))
+    
+    # Add proxy location if connected
+    if st.session_state.proxy_connected:
+        proxy_lat, proxy_lon, proxy_cc = coords_for_proxy(st.session_state.current_proxy, st.session_state.selected_country)
+        proxy_loc = st.session_state.get('proxy_location')
+        
+        proxy_text = f"Proxy: {proxy_loc.get('city', 'Unknown') if proxy_loc else 'Unknown'}, {proxy_loc.get('country', proxy_cc) if proxy_loc else proxy_cc}"
+        
+        fig.add_trace(go.Scattergeo(
+            lon=[proxy_lon], lat=[proxy_lat],
+            mode='markers',
+            marker=dict(size=22, color='#10b981', symbol='diamond',
+                      line=dict(width=3, color='white')),
+            name='Proxy Server',
+            text=[proxy_text],
+            hoverinfo='text'
+        ))
+        
+        # Draw connection line if both locations available
+        if ('user_location' in st.session_state and 
+            st.session_state.user_location and
+            st.session_state.user_location.get('lat') and 
+            st.session_state.user_location.get('lon')):
+            
+            user_loc = st.session_state.user_location
+            fig.add_trace(go.Scattergeo(
+                lon=[user_loc['lon'], proxy_lon],
+                lat=[user_loc['lat'], proxy_lat],
+                mode='lines',
+                line=dict(width=3, color='#fbbf24', dash='dash'),
+                name='Connection Path',
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+    
+    fig.update_layout(
+        geo=dict(
+            showframe=False, 
+            showcoastlines=True, 
+            projection_type='natural earth',
+            bgcolor='rgba(0,0,0,0)', 
+            landcolor='#374151', 
+            oceancolor='#1e293b', 
+            coastlinecolor='#6b7280'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)', 
+        paper_bgcolor='rgba(0,0,0,0)', 
+        height=350, 
+        margin=dict(l=0,r=0,t=0,b=0),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.1,
+            xanchor="center",
+            x=0.5,
+            font=dict(color="white")
+        )
+    )
+    
+    return fig
 
 # Session state initialization
 if "proxy_connected" not in st.session_state:
@@ -257,6 +430,10 @@ if "force_reload_key" not in st.session_state:
     st.session_state.force_reload_key = 0
 if "only_common_ports" not in st.session_state:
     st.session_state.only_common_ports = True
+if "user_location" not in st.session_state:
+    st.session_state.user_location = None
+if "proxy_location" not in st.session_state:
+    st.session_state.proxy_location = None
 
 def servers_to_list_control(n: int) -> Tuple[int, bool]:
     shuffle = st.checkbox("Shuffle", True)
@@ -271,7 +448,7 @@ def servers_to_list_control(n: int) -> Tuple[int, bool]:
 
 def main():
     st.markdown('<div class="main-header">🛡️ ProxyStream</div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align: center; color: #94a3b8; font-size: 16px; margin-bottom: 40px;">Modern Open-Source Proxy Testing Dashboard</p>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align: center; color: #94a3b8; font-size: 16px; margin-bottom: 40px;">Advanced Proxy Testing Dashboard with Global Location Intelligence</p>', unsafe_allow_html=True)
 
     # Security warning
     st.markdown("""
@@ -287,6 +464,33 @@ def main():
     with st.sidebar:
         st.markdown("## 🔧 Proxy Settings")
 
+        # Location Detection Section
+        st.markdown("---")
+        st.markdown("## 🎯 Your Location")
+        
+        if st.button("📍 Detect My Location", use_container_width=True):
+            with st.spinner("Detecting your location..."):
+                user_loc = get_user_location()
+                if user_loc:
+                    st.session_state.user_location = user_loc
+                    st.success(f"Located: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}")
+                else:
+                    st.error("Could not detect location")
+        
+        if st.session_state.user_location:
+            user_loc = st.session_state.user_location
+            st.markdown(f"""
+            <div class="location-card">
+                <strong>🏠 Your Real Location</strong><br>
+                📍 {user_loc.get('city', 'Unknown')}, {user_loc.get('region', 'Unknown')}<br>
+                🏳️ {user_loc.get('country', 'Unknown')}<br>
+                🌐 IP: {user_loc.get('ip', 'Unknown')}<br>
+                🏢 ISP: {user_loc.get('isp', 'Unknown')[:30]}...
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.markdown("---")
+        
         colref1, colref2 = st.columns([3,1])
         with colref1:
             st.caption(f"Source: {source_used}")
@@ -359,18 +563,19 @@ def main():
                     help="Select a proxy server to test"
                 )
 
-                # Connect / Disconnect with REAL testing
+                # Connect / Disconnect with enhanced testing
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("🧪 Test Connection", use_container_width=True):
-                        with st.spinner("Testing proxy connection..."):
-                            success, metrics = test_proxy_connection(selected_proxy, timeout=10)
+                        with st.spinner("Testing proxy connection and location..."):
+                            success, metrics = test_proxy_connection(selected_proxy, timeout=12)
                             if success:
                                 st.session_state.proxy_connected = True
                                 st.session_state.current_proxy = selected_proxy
                                 st.session_state.connection_start_time = datetime.now()
                                 st.session_state.proxy_metrics = metrics
                                 st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
+                                st.session_state.proxy_location = metrics.get('location')
                                 
                                 # Show success with capabilities
                                 if metrics['http_ok'] and metrics['https_ok']:
@@ -393,6 +598,7 @@ def main():
                                             st.session_state.connection_start_time = datetime.now()
                                             st.session_state.proxy_metrics = metrics
                                             st.session_state.active_proxy = normalize_proxy_http(backup_proxy)
+                                            st.session_state.proxy_location = metrics.get('location')
                                             st.success("✅ Connected to backup server!")
                                             st.rerun()
 
@@ -403,10 +609,11 @@ def main():
                         st.session_state.connection_start_time = None
                         st.session_state.proxy_metrics = {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False}
                         st.session_state.active_proxy = None
+                        st.session_state.proxy_location = None
                         st.success("Disconnected!")
                         st.rerun()
 
-        # Connection Status
+        # Enhanced Connection Status
         st.markdown("---")
         st.markdown("## 📊 Connection Status")
         if st.session_state.proxy_connected:
@@ -427,7 +634,15 @@ def main():
                 duration = datetime.now() - st.session_state.connection_start_time
                 st.text(f"Duration: {str(duration).split('.')[0]}")
             st.text(f"Server: {st.session_state.current_proxy}")
-            st.text(f"Location: {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country}")
+            
+            # Enhanced location display
+            proxy_loc = st.session_state.proxy_location
+            if proxy_loc:
+                st.text(f"Location: {proxy_loc.get('city', 'Unknown')}, {proxy_loc.get('region', 'Unknown')}")
+                st.text(f"Country: {get_country_flag(proxy_loc.get('country_code', ''))} {proxy_loc.get('country', 'Unknown')}")
+            else:
+                st.text(f"Location: {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country}")
+            
             st.text(f"Latency: {st.session_state.proxy_metrics.get('latency', 0)}ms")
             detected_ip = st.session_state.proxy_metrics.get('ip_detected')
             if detected_ip:
@@ -436,66 +651,80 @@ def main():
             st.markdown('<div class="proxy-status-disconnected">🔴 Disconnected</div>', unsafe_allow_html=True)
             st.info("Select a proxy server to test connection")
 
-    # Main dashboard - ONLY show realistic data when actually connected
+    # Main dashboard with enhanced location features
     if st.session_state.proxy_connected:
+        # Location Comparison Section
+        if st.session_state.user_location and st.session_state.proxy_location:
+            st.markdown("### 🌍 Location Intelligence")
+            
+            user_loc = st.session_state.user_location
+            proxy_loc = st.session_state.proxy_location
+            
+            # Calculate distance
+            if (user_loc.get('lat') and user_loc.get('lon') and 
+                proxy_loc.get('lat') and proxy_loc.get('lon')):
+                distance = calculate_distance(
+                    float(user_loc['lat']), float(user_loc['lon']),
+                    float(proxy_loc['lat']), float(proxy_loc['lon'])
+                )
+                
+                col_dist1, col_dist2, col_dist3 = st.columns(3)
+                with col_dist1:
+                    st.metric("Connection Distance", f"{distance:.0f} km")
+                with col_dist2:
+                    # Time zone comparison
+                    user_tz = user_loc.get('timezone', 'Unknown')
+                    proxy_tz = proxy_loc.get('timezone', 'Unknown')
+                    tz_match = "Same" if user_tz == proxy_tz else "Different"
+                    st.metric("Timezone Match", tz_match)
+                with col_dist3:
+                    # ISP comparison
+                    user_isp = user_loc.get('isp', '')[:20]
+                    proxy_isp = proxy_loc.get('isp', '')[:20]
+                    st.metric("Your ISP vs Proxy ISP", "Different" if user_isp != proxy_isp else "Same")
+            
+            # Side-by-side location comparison
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("#### 🏠 Your Real Location")
+                st.markdown(f"""
+                <div class="location-card">
+                    📍 <strong>{user_loc.get('city', 'Unknown')}, {user_loc.get('region', 'Unknown')}</strong><br>
+                    🏳️ {user_loc.get('country', 'Unknown')}<br>
+                    🌐 IP: {user_loc.get('ip', 'Unknown')}<br>
+                    🏢 ISP: {user_loc.get('isp', 'Unknown')}<br>
+                    🕐 Timezone: {user_loc.get('timezone', 'Unknown')}<br>
+                    📮 Postal: {user_loc.get('postal', 'Unknown')}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown("#### 🎯 Proxy Server Location")
+                st.markdown(f"""
+                <div class="location-card">
+                    📍 <strong>{proxy_loc.get('city', 'Unknown')}, {proxy_loc.get('region', 'Unknown')}</strong><br>
+                    🏳️ {proxy_loc.get('country', 'Unknown')}<br>
+                    🌐 IP: {proxy_loc.get('ip', 'Unknown')}<br>
+                    🏢 ISP: {proxy_loc.get('isp', 'Unknown')}<br>
+                    🕐 Timezone: {proxy_loc.get('timezone', 'Unknown')}<br>
+                    📮 Postal: {proxy_loc.get('postal', 'Unknown')}
+                </div>
+                """, unsafe_allow_html=True)
+
         col1, col2 = st.columns(2)
 
         with col1:
-            st.markdown("### 🌍 Connection Details")
-            metrics = st.session_state.proxy_metrics
+            st.markdown("### 🗺️ Global Connection Map")
             
-            # Show actual connection status
-            http_ok = metrics.get('http_ok', False)
-            https_ok = metrics.get('https_ok', False)
-            
-            if http_ok and https_ok:
-                st.success(f"🟢 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (Full Support)")
-            elif http_ok:
-                st.warning(f"🟡 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (HTTP Only)")
-            elif https_ok:
-                st.warning(f"🟡 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (HTTPS Only)")
-            else:
-                st.info(f"🔵 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (Testing)")
-                
-            st.info(f"Server: {st.session_state.current_proxy}")
-
-            latency = st.session_state.proxy_metrics.get('latency', 0)
-            speed = st.session_state.proxy_metrics.get('speed', 0)
-
-            c1, c2 = st.columns(2)
-            with c1:
-                if latency == 0:
-                    quality = "Unknown"
-                elif latency < 50:
-                    quality = "Excellent"
-                elif latency < 100:
-                    quality = "Good"
-                elif latency < 200:
-                    quality = "Fair"
-                else:
-                    quality = "Poor"
-                st.metric("Latency", f"{latency}ms", delta=quality)
-            with c2:
-                st.metric("Est. Speed", f"{speed:.1f} Mbps", delta="Estimated" if speed > 0 else "N/A")
-
-            # World map
-            lat, lon, cc = coords_for_proxy(st.session_state.current_proxy, st.session_state.selected_country)
-            fig_map = go.Figure(data=go.Scattergeo(
-                lon=[lon], lat=[lat], mode='markers',
-                marker=dict(size=20, color='#10b981', line=dict(width=3, color='white')),
-                showlegend=False, text=[f"{cc} Server"], hoverinfo='text'
-            ))
-            fig_map.update_layout(
-                geo=dict(showframe=False, showcoastlines=True, projection_type='natural earth',
-                         bgcolor='rgba(0,0,0,0)', landcolor='#374151', oceancolor='#1e293b', coastlinecolor='#6b7280'),
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', height=300, margin=dict(l=0,r=0,t=0,b=0)
-            )
+            # Enhanced world map
+            fig_map = create_enhanced_map()
             st.plotly_chart(fig_map, use_container_width=True, config={'displayModeBar': False})
 
         with col2:
             st.markdown("### 📊 Proxy Capabilities")
             
-            # Show actual proxy capabilities instead of fake data usage
+            # Show actual proxy capabilities
             metrics = st.session_state.proxy_metrics
             
             col2a, col2b = st.columns(2)
@@ -508,30 +737,29 @@ def main():
                 st.metric("HTTPS Tunneling", https_status)
 
             # Show detected IP if available
-            if metrics.get('ip_detected'):
-                st.metric("External IP via Proxy", metrics['ip_detected'])
+            detected_ip = metrics.get('ip_detected')
+            if detected_ip:
+                st.metric("External IP via Proxy", detected_ip)
             
-            # Show connection quality chart
-            st.markdown("#### Connection Quality Over Time")
-            # Generate a simple quality timeline
+            # Connection quality over time
+            st.markdown("#### Connection Quality Timeline")
             timeline_data = []
             base_time = st.session_state.connection_start_time or datetime.now()
             for i in range(24):
                 time_point = base_time - timedelta(hours=23-i)
-                # Simulate some variation around actual latency
                 base_latency = st.session_state.proxy_metrics.get('latency', 50)
                 varied_latency = max(10, base_latency + random.randint(-20, 20))
                 timeline_data.append({'time': time_point, 'latency': varied_latency})
                 
             timeline_df = pd.DataFrame(timeline_data)
-            fig_quality = px.line(timeline_df, x='time', y='latency', title="Latency Timeline")
+            fig_quality = px.line(timeline_df, x='time', y='latency', title="Latency Over Time")
             fig_quality.update_layout(
                 plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
                 font_color='white', height=250
             )
             st.plotly_chart(fig_quality, use_container_width=True, config={'displayModeBar': False})
 
-        # Performance metrics - REAL data only
+        # Performance metrics - Real data only
         st.markdown("---")
         c5, c6, c7, c8 = st.columns(4)
         with c5:
@@ -547,7 +775,7 @@ def main():
             total_proxies = sum(len(v) for v in parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]).values())
             st.metric("Available Servers", f"{total_proxies:,}")
 
-        # Browse via proxy (preserved functionality)
+        # Browse via proxy (enhanced)
         st.markdown("---")
         st.markdown("### 🔎 Browse via Connected Proxy")
         
@@ -559,7 +787,7 @@ def main():
             st.caption(f"{http_badge} • {https_badge}")
         
         urls = st.text_area("Enter URLs to test (one per line):",
-                            value="https://httpbin.org/ip\nhttp://example.com", height=90)
+                            value="https://httpbin.org/ip\nhttp://example.com\nhttp://www.google.com", height=100)
         
         if st.button("🌐 Test Browse", use_container_width=True):
             targets = [u.strip() for u in urls.splitlines() if u.strip()]
@@ -567,14 +795,13 @@ def main():
                 for url in targets:
                     st.markdown(f"**Testing:** {url}")
                     with st.spinner("Fetching via proxy..."):
-                        # Use the same proxy testing logic
                         try:
                             proxy_http = st.session_state.active_proxy
                             proxies = {"http": proxy_http, "https": proxy_http}
                             headers = {"User-Agent": "ProxyStream/2.0"}
                             
                             start_time = time.perf_counter()
-                            response = requests.get(url, proxies=proxies, headers=headers, timeout=10)
+                            response = requests.get(url, proxies=proxies, headers=headers, timeout=12)
                             elapsed = (time.perf_counter() - start_time) * 1000
                             
                             if response.ok:
@@ -600,14 +827,20 @@ def main():
                     st.markdown("---")
 
     else:
-        # Disconnected state
+        # Enhanced disconnected state
         st.markdown("### 🔌 Not Connected")
+        
+        # Show user location status
+        if st.session_state.user_location:
+            user_loc = st.session_state.user_location
+            st.info(f"Your location detected: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')} - Ready to find proxy servers worldwide!")
+        else:
+            st.info("Detect your location from the sidebar, then select a proxy server to test global connections.")
+        
         proxy_data = parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0])
         
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.info("Select a proxy server from the sidebar to test connection and capabilities.")
-            
             st.markdown("### 🌐 Available Proxy Network")
             countries = list(proxy_data.keys())
             server_counts = [len(proxy_data[c]) for c in countries]
@@ -620,13 +853,13 @@ def main():
             )
             st.plotly_chart(fig_network, use_container_width=True, config={'displayModeBar': False})
 
-    # Footer
+    # Enhanced footer
     total_proxies = sum(len(v) for v in parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]).values())
     st.markdown("---")
     st.markdown(f"""
     <div style="text-align: center; color: #6b7280; font-size: 14px;">
-        <p><strong>ProxyStream v2.1</strong> - Real Proxy Testing Dashboard</p>
-        <p>🧪 Testing • 🔍 Analysis • 🌍 Global Network • ⚠️ Educational Use Only</p>
+        <p><strong>ProxyStream v3.0</strong> - Advanced Proxy Testing with Global Location Intelligence</p>
+        <p>🧪 Real Testing • 🗺️ Location Analysis • 🌍 Global Network • ⚠️ Educational Use Only</p>
         <p>Network: <strong>{total_proxies:,}</strong> servers across <strong>{len(parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]))}</strong> countries</p>
         <p style="font-size: 12px; color: #6b7280;">Disclaimer: This tool tests public proxies for educational purposes. Use reputable VPN services for actual privacy.</p>
     </div>
@@ -634,4 +867,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # Removed auto-refresh to prevent unnecessary reloads
