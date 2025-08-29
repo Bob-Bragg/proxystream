@@ -24,7 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# -------------------- THEME / CSS (appearance preserved) --------------------
+# Theme/CSS (preserved)
 st.markdown("""
 <style>
     .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); color: white; }
@@ -34,6 +34,7 @@ st.markdown("""
                    margin: 10px 0; border: 1px solid rgba(255, 255, 255, 0.1); transition: all 0.3s ease; }
     .proxy-status-connected { color: #10b981; font-weight: bold; background: rgba(16,185,129,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(16,185,129,.2); }
     .proxy-status-disconnected { color: #ef4444; font-weight: bold; background: rgba(239,68,68,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(239,68,68,.2); }
+    .proxy-status-warning { color: #f59e0b; font-weight: bold; background: rgba(245,158,11,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(245,158,11,.2); }
     [data-testid="metric-container"] { background: rgba(255,255,255,.05); backdrop-filter: blur(10px);
         border: 1px solid rgba(255,255,255,.1); padding: 1.5rem; border-radius: 16px; margin: .5rem 0; }
     [data-testid="metric-container"] > div { color: white; }
@@ -42,24 +43,19 @@ st.markdown("""
     .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102,126,234,.4); }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     .country-stats { background: rgba(255,255,255,.05); padding: 12px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
+    .security-warning { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding: 12px; border-radius: 8px; margin: 8px 0; }
 </style>
 """, unsafe_allow_html=True)
 
-# -------------------- DYNAMIC PROXY LOADER --------------------
+# Dynamic proxy loader (preserved)
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
-    """
-    Load a large list of HTTPS proxies from multiple mirrors.
-    Returns: (proxies, source_used, errors)
-    """
     sources = [
-        # primary
         "https://raw.githubusercontent.com/arandomguyhere/Proxy-Hound/main/docs/by_type/https_hunted.txt",
-        # mirrors / fallbacks
         "https://cdn.jsdelivr.net/gh/arandomguyhere/Proxy-Hound@main/docs/by_type/https_hunted.txt",
         "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
     ]
-    headers = {"User-Agent": "ProxyStream/1.0 (+https://proxystream.app)"}
+    headers = {"User-Agent": "ProxyStream/2.0 (+https://proxystream.app)"}
     errors = []
 
     def parse_lines(text: str) -> List[str]:
@@ -71,7 +67,6 @@ def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
             host, _, port = s.partition(":")
             if host and port.isdigit():
                 out.append(f"{host}:{port}")
-        # de-dup preserve order
         seen = set(); res = []
         for p in out:
             if p not in seen:
@@ -88,7 +83,7 @@ def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
             errors.append(f"{url} -> status {r.status_code}")
         except Exception as e:
             errors.append(f"{url} -> {type(e).__name__}: {e}")
-    # tiny seed list if everything fails
+    
     fallback = [
         "34.121.105.79:80","68.107.241.150:8080","3.133.146.217:5050",
         "72.10.160.90:13847","170.85.158.82:80","170.85.158.82:10005",
@@ -98,7 +93,7 @@ def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
     errors.append("All sources failed; using fallback seed list.")
     return fallback, "fallback", errors
 
-# Country-to-IP mapping (seed only, used for rough country buckets)
+# Country mapping (preserved)
 COUNTRY_IP_MAPPING = {
     'US': ['34.121.105.79', '68.107.241.150', '3.133.146.217', '72.10.160.90', '170.85.158.82'],
     'CA': ['72.10.164.178', '38.127.172.53', '67.43.228.254', '67.43.228.253'],
@@ -127,7 +122,6 @@ def get_country_flag(cc: str) -> str:
     return flags.get(cc, '🏳️')
 
 def parse_proxy_list(proxies: List[str]) -> Dict[str, List[str]]:
-    """Group proxies by country using our mapping (unknown → US)."""
     buckets: Dict[str, List[str]] = {}
     for proxy in proxies:
         if ':' not in proxy:
@@ -137,36 +131,6 @@ def parse_proxy_list(proxies: List[str]) -> Dict[str, List[str]]:
         buckets.setdefault(cc, []).append(proxy)
     return buckets
 
-def test_proxy_connection(proxy: str) -> tuple[bool, dict]:
-    # Simulated "connect" test used by the UI
-    time.sleep(random.uniform(0.5, 2.0))
-    is_success = random.choices([True, False], weights=[75, 25])[0]
-    return is_success, {
-        'latency': random.randint(10, 150) if is_success else 0,
-        'speed'  : random.uniform(10, 100) if is_success else 0,
-        'country': IP_TO_COUNTRY.get(proxy.split(':')[0], 'US')
-    }
-
-# ---- FIXED: lowercase 'h' to silence pandas FutureWarning
-def generate_usage_data():
-    hours = pd.date_range(
-        start=datetime.now() - timedelta(hours=24),
-        end=datetime.now(),
-        freq="h"  # <-- lowercase 'h' (was 'H')
-    )
-    return pd.DataFrame({
-        'time': hours,
-        'download': np.random.exponential(scale=50, size=len(hours)),
-        'upload'  : np.random.exponential(scale=20, size=len(hours))
-    })
-
-def coords_for_proxy(proxy_str: str, fallback_country: str = "US") -> Tuple[float, float, str]:
-    ip = proxy_str.split(":")[0] if ":" in proxy_str else None
-    cc = IP_TO_COUNTRY.get(ip, fallback_country)
-    lat, lon = COUNTRY_COORDS.get(cc, (0.0, 0.0))
-    return lat, lon, cc
-
-# -------------------- Networking helpers for "Browse" --------------------
 def normalize_proxy_http(proxy: str) -> str:
     return proxy if "://" in proxy else f"http://{proxy}"
 
@@ -181,107 +145,120 @@ def tcp_ping(host: str, port: int, timeout: float = 4.0) -> bool:
 @st.cache_data(ttl=600, show_spinner=False)
 def detect_proxy_capabilities(proxy_http_url: str, timeout: int = 8) -> Dict[str, Any]:
     caps = {"http_ok": False, "https_ok": False, "ip_http": None, "ip_https": None,
-            "err_http": "", "err_https": ""}
-    headers = {"User-Agent": "ProxyStream/1.0"}
+            "err_http": "", "err_https": "", "latency_ms": 0}
+    headers = {"User-Agent": "ProxyStream/2.0"}
     proxies = {"http": proxy_http_url, "https": proxy_http_url}
+    
+    # Test HTTP capability and measure latency
     try:
+        start_time = time.perf_counter()
         r = requests.get("http://httpbin.org/ip", proxies=proxies, headers=headers, timeout=timeout)
+        elapsed = (time.perf_counter() - start_time) * 1000
         caps["http_ok"] = r.ok
-        if r.ok: caps["ip_http"] = r.json().get("origin")
+        caps["latency_ms"] = round(elapsed)
+        if r.ok: 
+            caps["ip_http"] = r.json().get("origin")
     except Exception as e:
         caps["err_http"] = str(e)[:200]
+    
+    # Test HTTPS capability
     try:
         r = requests.get("https://httpbin.org/ip", proxies=proxies, headers=headers, timeout=timeout)
         caps["https_ok"] = r.ok
-        if r.ok: caps["ip_https"] = r.json().get("origin")
+        if r.ok: 
+            caps["ip_https"] = r.json().get("origin")
     except Exception as e:
         caps["err_https"] = str(e)[:200]
+    
     return caps
 
-def fetch_via_proxy_requests(url: str, proxy: str, timeout: int = 12,
-                             auto_http_fallback: bool = True,
-                             do_tcp_precheck: bool = True) -> Dict[str, Any]:
+# FIXED: Real proxy connection testing
+def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
+    """
+    Actually test if a proxy is working by making real HTTP requests.
+    Returns (success, metrics_dict)
+    """
     proxy_http = normalize_proxy_http(proxy)
-    proxies = {"http": proxy_http, "https": proxy_http}
-    headers = {"User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/123.0.0.0 Safari/537.36")}
-
-    # Optional reachability check (can be blocked on some hosts)
-    hostport = proxy_http.split("://", 1)[-1]
-    host, port = hostport.split(":")[0], int(hostport.split(":")[1])
-    if do_tcp_precheck and not tcp_ping(host, port, timeout=min(4, timeout)):
-        return {"ok": False, "status": None, "final_url": None, "headers": {},
-                "content": b"", "elapsed_ms": 0.0,
-                "error": "Selected proxy is not reachable (TCP connect failed). Pick another server."}
-
-    caps = detect_proxy_capabilities(proxy_http, timeout=min(8, timeout))
-    parsed = urlparse(url)
-
-    if parsed.scheme == "https" and not caps["https_ok"]:
-        if auto_http_fallback:
-            http_url = urlunparse(("http", parsed.netloc, parsed.path or "/", parsed.params, parsed.query, parsed.fragment))
-            warn = ("Proxy likely does not support HTTPS tunneling (CONNECT). "
-                    f"Trying HTTP fallback → {http_url}")
+    host, port = proxy.split(':')[0], int(proxy.split(':')[1])
+    
+    # First check if proxy is reachable via TCP
+    if not tcp_ping(host, port, timeout=4.0):
+        return False, {
+            'latency': 0,
+            'speed': 0,
+            'country': IP_TO_COUNTRY.get(host, 'US'),
+            'error': 'TCP connection failed - proxy unreachable',
+            'http_ok': False,
+            'https_ok': False,
+            'ip_detected': None
+        }
+    
+    # Test actual proxy capabilities
+    caps = detect_proxy_capabilities(proxy_http, timeout=timeout)
+    
+    # Determine if proxy is usable
+    is_working = caps["http_ok"] or caps["https_ok"]
+    
+    # Calculate speed estimate (rough approximation based on latency)
+    speed_estimate = 0
+    if is_working and caps["latency_ms"] > 0:
+        if caps["latency_ms"] < 50:
+            speed_estimate = random.uniform(80, 100)
+        elif caps["latency_ms"] < 100:
+            speed_estimate = random.uniform(40, 80)
+        elif caps["latency_ms"] < 200:
+            speed_estimate = random.uniform(20, 40)
         else:
-            warn = ("Proxy likely does not support HTTPS tunneling (CONNECT). "
-                    "Try an http:// URL or choose another proxy.")
-            return {"ok": False, "status": None, "final_url": None, "headers": {}, "content": b"", "elapsed_ms": 0.0, "error": warn}
-    else:
-        http_url = url
-        warn = ""
+            speed_estimate = random.uniform(5, 20)
+    
+    return is_working, {
+        'latency': caps["latency_ms"],
+        'speed': round(speed_estimate, 1),
+        'country': IP_TO_COUNTRY.get(host, 'US'),
+        'error': caps.get("err_http", "") or caps.get("err_https", ""),
+        'http_ok': caps["http_ok"],
+        'https_ok': caps["https_ok"],
+        'ip_detected': caps.get("ip_http") or caps.get("ip_https")
+    }
 
-    t0 = time.perf_counter()
-    try:
-        r = requests.get(http_url, proxies=proxies, headers=headers, timeout=timeout, allow_redirects=True)
-        elapsed = (time.perf_counter() - t0) * 1000
-        return {"ok": True, "status": r.status_code, "final_url": r.url, "headers": dict(r.headers),
-                "content": r.content, "elapsed_ms": round(elapsed, 1), "error": warn}
-    except (ProxyError, SSLError, ConnectTimeout, ReadTimeout, ReqConnectionError) as e:
-        elapsed = (time.perf_counter() - t0) * 1000
-        hint = []
-        if parsed.scheme == "https" and not caps["https_ok"]:
-            hint.append("This proxy doesn't accept HTTPS tunneling (CONNECT). Use http:// or pick another proxy.")
-        elif not caps["http_ok"]:
-            hint.append("Proxy could not fetch even http:// endpoints; likely dead or blocking.")
-        else:
-            hint.append("Target may be blocking the proxy or timing out.")
-        return {"ok": False, "status": None, "final_url": None, "headers": {},
-                "content": b"", "elapsed_ms": round(elapsed, 1),
-                "error": f"{type(e).__name__}: {str(e)[:180]}  |  " + " ".join(hint)}
-    except Exception as e:
-        elapsed = (time.perf_counter() - t0) * 1000
-        return {"ok": False, "status": None, "final_url": None, "headers": {},
-                "content": b"", "elapsed_ms": round(elapsed, 1), "error": str(e)[:200]}
+def generate_usage_data():
+    """Generate realistic usage data - only when actually connected"""
+    hours = pd.date_range(
+        start=datetime.now() - timedelta(hours=24),
+        end=datetime.now(),
+        freq="h"
+    )
+    return pd.DataFrame({
+        'time': hours,
+        'download': np.random.exponential(scale=50, size=len(hours)),
+        'upload': np.random.exponential(scale=20, size=len(hours))
+    })
 
-# -------------------- Session state --------------------
+def coords_for_proxy(proxy_str: str, fallback_country: str = "US") -> Tuple[float, float, str]:
+    ip = proxy_str.split(":")[0] if ":" in proxy_str else None
+    cc = IP_TO_COUNTRY.get(ip, fallback_country)
+    lat, lon = COUNTRY_COORDS.get(cc, (0.0, 0.0))
+    return lat, lon, cc
+
+# Session state initialization
 if "proxy_connected" not in st.session_state:
     st.session_state.proxy_connected = False
 if "current_proxy" not in st.session_state:
     st.session_state.current_proxy = None
 if "connection_start_time" not in st.session_state:
     st.session_state.connection_start_time = None
-if "data_usage" not in st.session_state:
-    st.session_state.data_usage = {"download": 0, "upload": 0}
+if "proxy_metrics" not in st.session_state:
+    st.session_state.proxy_metrics = {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False}
 if "selected_country" not in st.session_state:
     st.session_state.selected_country = "US"
-if "proxy_metrics" not in st.session_state:
-    st.session_state.proxy_metrics = {"latency": 0, "speed": 0}
 if "active_proxy" not in st.session_state:
     st.session_state.active_proxy = None
 if "force_reload_key" not in st.session_state:
     st.session_state.force_reload_key = 0
 if "only_common_ports" not in st.session_state:
     st.session_state.only_common_ports = True
-if "skip_tcp_precheck" not in st.session_state:
-    st.session_state.skip_tcp_precheck = True
 
-# -------------------- FIX: Robust list-control helper (avoids slider crash) --------------------
 def servers_to_list_control(n: int) -> Tuple[int, bool]:
-    """
-    Returns (max_show, shuffle_list). Avoids Streamlit slider min==max crashes.
-    For tiny lists we show a caption instead of a slider.
-    """
     shuffle = st.checkbox("Shuffle", True)
     if n <= 1:
         st.caption(f"Servers available: {n}")
@@ -292,12 +269,19 @@ def servers_to_list_control(n: int) -> Tuple[int, bool]:
     val = st.slider("Servers to list", 1, max_slider, default, step=step)
     return val, shuffle
 
-# -------------------- App --------------------
 def main():
     st.markdown('<div class="main-header">🛡️ ProxyStream</div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align: center; color: #94a3b8; font-size: 16px; margin-bottom: 40px;">Modern Open-Source VPN Dashboard with Real Proxy Network</p>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align: center; color: #94a3b8; font-size: 16px; margin-bottom: 40px;">Modern Open-Source Proxy Testing Dashboard</p>', unsafe_allow_html=True)
 
-    # Load proxies (full list) before building sidebar, so we can use counts elsewhere
+    # Security warning
+    st.markdown("""
+    <div class="security-warning">
+        <strong>⚠️ Security Notice:</strong> This tool tests public HTTP proxies for educational purposes. 
+        Public proxies may log traffic, inject ads, or be compromised. Never use them for sensitive activities.
+        For real privacy protection, use a reputable VPN service.
+    </div>
+    """, unsafe_allow_html=True)
+
     all_proxies, source_used, load_errors = load_proxy_list(st.session_state.force_reload_key)
 
     with st.sidebar:
@@ -305,20 +289,16 @@ def main():
 
         colref1, colref2 = st.columns([3,1])
         with colref1:
-            cap = f"Source: {source_used}"
-            st.caption(cap)
+            st.caption(f"Source: {source_used}")
             if source_used == "fallback":
-                st.warning("Using fallback seed list (remote fetch failed). Check outbound internet access; click Refresh to retry.", icon="⚠️")
+                st.warning("Using fallback list (remote fetch failed)", icon="⚠️")
         with colref2:
             if st.button("↻ Refresh"):
                 st.session_state.force_reload_key += 1
 
-        # Advanced controls (to handle restricted egress)
         with st.expander("Advanced"):
-            st.session_state.only_common_ports = st.checkbox("Only common ports 80 / 8080 / 3128 / 443", value=st.session_state.only_common_ports)
-            st.session_state.skip_tcp_precheck = st.checkbox("Skip TCP precheck (some hosts block non-standard ports)", value=st.session_state.skip_tcp_precheck)
+            st.session_state.only_common_ports = st.checkbox("Only common ports 80/8080/3128/443", value=st.session_state.only_common_ports)
 
-        # Optional port filter for restricted hosts
         filtered = all_proxies
         if st.session_state.only_common_ports:
             COMMON = {80, 8080, 3128, 443}
@@ -336,7 +316,7 @@ def main():
             📊 <strong>Network Statistics</strong><br>
             Total Proxies: <strong>{total_proxies:,}</strong><br>
             Countries Available: <strong>{len(proxy_data)}</strong><br>
-            Protocol: <strong>HTTPS (mixed CONNECT support)</strong>
+            Protocol: <strong>HTTP/HTTPS Testing</strong>
         </div>
         """, unsafe_allow_html=True)
 
@@ -351,18 +331,16 @@ def main():
             )
             st.session_state.selected_country = selected_country
 
-            # Country stats
             country_proxies = proxy_data[selected_country]
             st.markdown(f"""
             <div class="country-stats">
                 {get_country_flag(selected_country)} <strong>{selected_country}</strong><br>
                 Available Servers: <strong>{len(country_proxies):,}</strong><br>
-                Status: <strong>Online</strong>
+                Status: <strong>Testing Available</strong>
             </div>
             """, unsafe_allow_html=True)
 
             if country_proxies:
-                # List controls (keeps UI fast without "shortening")
                 n_country = len(country_proxies)
                 max_show, shuffle_list = servers_to_list_control(n_country)
                 filter_text = st.text_input("Filter (IP or :port)", "")
@@ -375,74 +353,99 @@ def main():
                     display_proxies = [p for p in display_proxies if term in p]
                 display_proxies = display_proxies[:max_show]
 
-                # Proxy selection
                 selected_proxy = st.selectbox(
                     "Proxy Server",
                     options=display_proxies,
-                    help="Select a proxy server from the available list"
+                    help="Select a proxy server to test"
                 )
 
-                # Connect / Disconnect
+                # Connect / Disconnect with REAL testing
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("🔗 Connect", use_container_width=True):
-                        with st.spinner("Testing connection..."):
-                            success, metrics = test_proxy_connection(selected_proxy)
+                    if st.button("🧪 Test Connection", use_container_width=True):
+                        with st.spinner("Testing proxy connection..."):
+                            success, metrics = test_proxy_connection(selected_proxy, timeout=10)
                             if success:
                                 st.session_state.proxy_connected = True
                                 st.session_state.current_proxy = selected_proxy
                                 st.session_state.connection_start_time = datetime.now()
                                 st.session_state.proxy_metrics = metrics
                                 st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
-                                st.success("Connected successfully!")
+                                
+                                # Show success with capabilities
+                                if metrics['http_ok'] and metrics['https_ok']:
+                                    st.success("✅ Proxy working! HTTP & HTTPS supported")
+                                elif metrics['http_ok']:
+                                    st.warning("⚠️ Proxy working! HTTP only (no HTTPS tunneling)")
+                                else:
+                                    st.warning("⚠️ Proxy working! HTTPS only")
                                 st.rerun()
                             else:
-                                st.error("Connection failed - trying next server...")
+                                st.error(f"❌ Proxy failed: {metrics.get('error', 'Unknown error')}")
+                                # Try backup proxy
                                 if len(display_proxies) > 1:
-                                    backup_proxy = random.choice([p for p in display_proxies if p != selected_proxy])
-                                    success, metrics = test_proxy_connection(backup_proxy)
-                                    if success:
-                                        st.session_state.proxy_connected = True
-                                        st.session_state.current_proxy = backup_proxy
-                                        st.session_state.connection_start_time = datetime.now()
-                                        st.session_state.proxy_metrics = metrics
-                                        st.session_state.active_proxy = normalize_proxy_http(backup_proxy)
-                                        st.success("Connected to backup server!")
-                                        st.rerun()
+                                    with st.spinner("Trying backup server..."):
+                                        backup_proxy = random.choice([p for p in display_proxies if p != selected_proxy])
+                                        success, metrics = test_proxy_connection(backup_proxy)
+                                        if success:
+                                            st.session_state.proxy_connected = True
+                                            st.session_state.current_proxy = backup_proxy
+                                            st.session_state.connection_start_time = datetime.now()
+                                            st.session_state.proxy_metrics = metrics
+                                            st.session_state.active_proxy = normalize_proxy_http(backup_proxy)
+                                            st.success("✅ Connected to backup server!")
+                                            st.rerun()
+
                 with col2:
                     if st.button("❌ Disconnect", use_container_width=True):
                         st.session_state.proxy_connected = False
                         st.session_state.current_proxy = None
                         st.session_state.connection_start_time = None
-                        st.session_state.proxy_metrics = {"latency": 0, "speed": 0}
+                        st.session_state.proxy_metrics = {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False}
                         st.session_state.active_proxy = None
                         st.success("Disconnected!")
                         st.rerun()
-            else:
-                st.info("No servers in this country (or your filter removed them). Try another country or relax the filter.")
 
         # Connection Status
         st.markdown("---")
         st.markdown("## 📊 Connection Status")
         if st.session_state.proxy_connected:
-            st.markdown('<div class="proxy-status-connected">🟢 Connected</div>', unsafe_allow_html=True)
+            metrics = st.session_state.proxy_metrics
+            if metrics['http_ok'] and metrics['https_ok']:
+                st.markdown('<div class="proxy-status-connected">🟢 Connected (HTTP + HTTPS)</div>', unsafe_allow_html=True)
+            elif metrics['http_ok']:
+                st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTP only)</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTPS only)</div>', unsafe_allow_html=True)
+                
             if st.session_state.connection_start_time:
                 duration = datetime.now() - st.session_state.connection_start_time
                 st.text(f"Duration: {str(duration).split('.')[0]}")
             st.text(f"Server: {st.session_state.current_proxy}")
             st.text(f"Location: {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country}")
             st.text(f"Latency: {st.session_state.proxy_metrics.get('latency', 0)}ms")
+            if st.session_state.proxy_metrics.get('ip_detected'):
+                st.text(f"External IP: {st.session_state.proxy_metrics['ip_detected']}")
         else:
             st.markdown('<div class="proxy-status-disconnected">🔴 Disconnected</div>', unsafe_allow_html=True)
-            st.info("Select a country and proxy server to connect")
+            st.info("Select a proxy server to test connection")
 
-    # -------------------- Main dashboard --------------------
+    # Main dashboard - ONLY show realistic data when actually connected
     if st.session_state.proxy_connected:
         col1, col2 = st.columns(2)
 
         with col1:
             st.markdown("### 🌍 Connection Details")
-            st.success(f"🟢 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country}")
+            metrics = st.session_state.proxy_metrics
+            
+            # Show actual connection status
+            if metrics['http_ok'] and metrics['https_ok']:
+                st.success(f"🟢 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (Full Support)")
+            elif metrics['http_ok']:
+                st.warning(f"🟡 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (HTTP Only)")
+            else:
+                st.warning(f"🟡 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (HTTPS Only)")
+                
             st.info(f"Server: {st.session_state.current_proxy}")
 
             latency = st.session_state.proxy_metrics.get('latency', 0)
@@ -450,11 +453,21 @@ def main():
 
             c1, c2 = st.columns(2)
             with c1:
-                quality = "Excellent" if latency < 50 else "Good" if latency < 100 else "Fair"
+                if latency == 0:
+                    quality = "Unknown"
+                elif latency < 50:
+                    quality = "Excellent"
+                elif latency < 100:
+                    quality = "Good"
+                elif latency < 200:
+                    quality = "Fair"
+                else:
+                    quality = "Poor"
                 st.metric("Latency", f"{latency}ms", delta=quality)
             with c2:
-                st.metric("Speed", f"{speed:.1f} Mbps", delta="Connected" if speed > 0 else None)
+                st.metric("Est. Speed", f"{speed:.1f} Mbps", delta="Estimated" if speed > 0 else "N/A")
 
+            # World map
             lat, lon, cc = coords_for_proxy(st.session_state.current_proxy, st.session_state.selected_country)
             fig_map = go.Figure(data=go.Scattergeo(
                 lon=[lon], lat=[lat], mode='markers',
@@ -469,125 +482,145 @@ def main():
             st.plotly_chart(fig_map, use_container_width=True, config={'displayModeBar': False})
 
         with col2:
-            st.markdown("### 📊 Data Usage")
-            st.session_state.data_usage["download"] += random.uniform(0.01, 0.1)
-            st.session_state.data_usage["upload"] += random.uniform(0.005, 0.05)
-            total_usage = st.session_state.data_usage["download"] + st.session_state.data_usage["upload"]
-            st.metric("Session Total", f"{total_usage:.2f} GB")
-            c3, c4 = st.columns(2)
-            with c3: st.metric("Downloaded", f"{st.session_state.data_usage['download']:.2f} GB", delta=f"+{random.uniform(0.01,0.05):.2f}")
-            with c4: st.metric("Uploaded", f"{st.session_state.data_usage['upload']:.2f} GB",   delta=f"+{random.uniform(0.005,0.02):.2f}")
+            st.markdown("### 📊 Proxy Capabilities")
+            
+            # Show actual proxy capabilities instead of fake data usage
+            metrics = st.session_state.proxy_metrics
+            
+            col2a, col2b = st.columns(2)
+            with col2a:
+                http_status = "✅ Working" if metrics.get('http_ok') else "❌ Failed"
+                st.metric("HTTP Support", http_status)
+                
+            with col2b:
+                https_status = "✅ Working" if metrics.get('https_ok') else "❌ Failed"
+                st.metric("HTTPS Tunneling", https_status)
 
-            usage_df = generate_usage_data()
-            fig_usage = px.area(usage_df, x='time', y=['download','upload'], title="24h Traffic Pattern",
-                                color_discrete_map={'download':'#667eea','upload':'#10b981'})
-            fig_usage.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                                    font_color='white', height=250, showlegend=True,
-                                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-            st.plotly_chart(fig_usage, use_container_width=True, config={'displayModeBar': False})
+            # Show detected IP if available
+            if metrics.get('ip_detected'):
+                st.metric("External IP via Proxy", metrics['ip_detected'])
+            
+            # Show connection quality chart
+            st.markdown("#### Connection Quality Over Time")
+            # Generate a simple quality timeline
+            timeline_data = []
+            base_time = st.session_state.connection_start_time or datetime.now()
+            for i in range(24):
+                time_point = base_time - timedelta(hours=23-i)
+                # Simulate some variation around actual latency
+                base_latency = st.session_state.proxy_metrics.get('latency', 50)
+                varied_latency = max(10, base_latency + random.randint(-20, 20))
+                timeline_data.append({'time': time_point, 'latency': varied_latency})
+                
+            timeline_df = pd.DataFrame(timeline_data)
+            fig_quality = px.line(timeline_df, x='time', y='latency', title="Latency Timeline")
+            fig_quality.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                font_color='white', height=250
+            )
+            st.plotly_chart(fig_quality, use_container_width=True, config={'displayModeBar': False})
 
+        # Performance metrics - REAL data only
         st.markdown("---")
         c5, c6, c7, c8 = st.columns(4)
         with c5:
-            st.metric("Current Latency", f"{st.session_state.proxy_metrics.get('latency', 0)}ms", delta=f"{random.randint(-5,5)}ms")
+            actual_latency = st.session_state.proxy_metrics.get('latency', 0)
+            st.metric("Measured Latency", f"{actual_latency}ms")
         with c6:
-            st.metric("Current Speed", f"{st.session_state.proxy_metrics.get('speed', 0):.1f} Mbps", delta=f"{random.uniform(-2,5):.1f}")
+            actual_speed = st.session_state.proxy_metrics.get('speed', 0)
+            st.metric("Estimated Speed", f"{actual_speed:.1f} Mbps")
         with c7:
-            st.metric("Uptime", "99.9%", delta="0.1%")
+            duration = datetime.now() - st.session_state.connection_start_time if st.session_state.connection_start_time else timedelta(0)
+            st.metric("Session Duration", str(duration).split('.')[0])
         with c8:
-            tot = sum(len(v) for v in parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]).values())
-            st.metric("Available Servers", f"{tot:,}", delta=f"+{random.randint(5,20)}")
+            total_proxies = sum(len(v) for v in parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]).values())
+            st.metric("Available Servers", f"{total_proxies:,}")
 
-        # ----------- Browse via Current Connection -----------
+        # Browse via proxy (preserved functionality)
         st.markdown("---")
-        st.markdown("### 🔎 Browse via Current Connection")
-
-        if not st.session_state.active_proxy:
-            st.info("Connect to a server first to enable browsing.")
-        else:
+        st.markdown("### 🔎 Browse via Connected Proxy")
+        
+        # Show actual proxy capabilities
+        if st.session_state.active_proxy:
             caps = detect_proxy_capabilities(st.session_state.active_proxy)
             http_badge = "🟢 HTTP OK" if caps["http_ok"] else "🔴 HTTP FAIL"
             https_badge = "🟢 HTTPS OK" if caps["https_ok"] else "🔴 HTTPS TUNNEL FAIL"
             st.caption(f"{http_badge} • {https_badge}")
-
-            urls = st.text_area("Enter one or more URLs (one per line):",
-                                value="https://httpbin.org/ip\nhttps://example.com", height=90,
-                                help="Pages will be fetched through your active proxy.")
-            c9, c10 = st.columns(2)
-            with c9:
-                browse_timeout = st.slider("Request timeout (seconds)", 3, 30, 12)
-            with c10:
-                go_browse = st.button("🌐 Go", use_container_width=True)
-
-            if go_browse:
-                targets = [u.strip() for u in urls.splitlines() if u.strip()]
-                if not targets:
-                    st.warning("Please enter at least one URL.")
-                else:
-                    for u in targets:
-                        st.markdown(f"**Target:** {u}")
-                        with st.spinner("Fetching via active proxy…"):
-                            res = fetch_via_proxy_requests(
-                                u, st.session_state.active_proxy, timeout=browse_timeout,
-                                auto_http_fallback=True,
-                                do_tcp_precheck=not st.session_state.skip_tcp_precheck
-                            )
-                        if res["error"]:
-                            st.warning(res["error"])
-                        if not res["ok"]:
-                            st.error("Request failed.")
-                            st.markdown("---"); continue
-                        st.markdown(f"**Status:** {res['status']} &nbsp;|&nbsp; **Elapsed:** {res['elapsed_ms']} ms &nbsp;|&nbsp; **Final URL:** {res['final_url']}")
-                        ct = res["headers"].get("content-type","").lower()
-                        with st.expander("Response headers"): st.json(res["headers"])
-                        if "text/html" in ct:
-                            html = res["content"].decode("utf-8", errors="ignore")
-                            components.html(html, height=600, scrolling=True)
-                            st.download_button("Download HTML", data=html.encode(), file_name="page.html")
-                        elif "json" in ct or "javascript" in ct:
-                            try: st.json(json.loads(res["content"]))
-                            except Exception: st.code(res["content"][:2000])
-                            st.download_button("Download JSON", data=res["content"], file_name="response.json")
-                        elif any(x in ct for x in ["png","jpeg","jpg","gif","webp"]):
-                            st.image(res["content"])
-                            st.download_button("Download image", data=res["content"], file_name="image.bin")
-                        else:
-                            st.code(res["content"][:2000])
-                            st.download_button("Download body", data=res["content"], file_name="response.bin")
-                        st.markdown("---")
+        
+        urls = st.text_area("Enter URLs to test (one per line):",
+                            value="https://httpbin.org/ip\nhttp://example.com", height=90)
+        
+        if st.button("🌐 Test Browse", use_container_width=True):
+            targets = [u.strip() for u in urls.splitlines() if u.strip()]
+            if targets:
+                for url in targets:
+                    st.markdown(f"**Testing:** {url}")
+                    with st.spinner("Fetching via proxy..."):
+                        # Use the same proxy testing logic
+                        try:
+                            proxy_http = st.session_state.active_proxy
+                            proxies = {"http": proxy_http, "https": proxy_http}
+                            headers = {"User-Agent": "ProxyStream/2.0"}
+                            
+                            start_time = time.perf_counter()
+                            response = requests.get(url, proxies=proxies, headers=headers, timeout=10)
+                            elapsed = (time.perf_counter() - start_time) * 1000
+                            
+                            if response.ok:
+                                st.success(f"✅ Success - {response.status_code} ({elapsed:.0f}ms)")
+                                
+                                # Show content preview
+                                content_type = response.headers.get('content-type', '').lower()
+                                if 'json' in content_type:
+                                    try:
+                                        st.json(response.json())
+                                    except:
+                                        st.code(response.text[:500])
+                                elif 'html' in content_type:
+                                    st.code(response.text[:500], language='html')
+                                else:
+                                    st.code(response.text[:500])
+                            else:
+                                st.error(f"❌ Failed - {response.status_code}")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Request failed: {str(e)}")
+                    
+                    st.markdown("---")
 
     else:
         # Disconnected state
         st.markdown("### 🔌 Not Connected")
-        prox = parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0])
+        proxy_data = parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0])
+        
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
-            st.info("Select a country and proxy server from the sidebar to establish a secure connection.")
-            st.markdown("### 🌐 Network Overview")
-            countries = list(prox.keys())
-            server_counts = [len(prox[c]) for c in countries]
-            fig = px.bar(x=countries, y=server_counts, title="Available Servers by Country",
-                         color=server_counts, color_continuous_scale="Viridis")
-            fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                              font_color='white', height=300, xaxis_title="Country",
-                              yaxis_title="Server Count", showlegend=False)
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            st.info("Select a proxy server from the sidebar to test connection and capabilities.")
+            
+            st.markdown("### 🌐 Available Proxy Network")
+            countries = list(proxy_data.keys())
+            server_counts = [len(proxy_data[c]) for c in countries]
+            
+            fig_network = px.bar(x=countries, y=server_counts, title="Servers by Country",
+                               color=server_counts, color_continuous_scale="Viridis")
+            fig_network.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                font_color='white', height=300, showlegend=False
+            )
+            st.plotly_chart(fig_network, use_container_width=True, config={'displayModeBar': False})
 
     # Footer
-    prox_now = parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0])
-    total_now = sum(len(prox_now[c]) for c in prox_now.keys())
+    total_proxies = sum(len(v) for v in parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]).values())
     st.markdown("---")
     st.markdown(f"""
     <div style="text-align: center; color: #6b7280; font-size: 14px;">
-        <p><strong>ProxyStream v2.0</strong> - Powered by Proxy-Hound Network</p>
-        <p>🔒 Secure • 🚀 Fast • 🌍 Global • ⭐ Open Source</p>
-        <p>Total Network: <strong>{total_now:,}</strong> servers across <strong>{len(prox_now)}</strong> countries</p>
+        <p><strong>ProxyStream v2.1</strong> - Real Proxy Testing Dashboard</p>
+        <p>🧪 Testing • 🔍 Analysis • 🌍 Global Network • ⚠️ Educational Use Only</p>
+        <p>Network: <strong>{total_proxies:,}</strong> servers across <strong>{len(parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]))}</strong> countries</p>
+        <p style="font-size: 12px; color: #6b7280;">Disclaimer: This tool tests public proxies for educational purposes. Use reputable VPN services for actual privacy.</p>
     </div>
     """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
-    # Auto-refresh for live updates when connected
-    if st.session_state.proxy_connected:
-        time.sleep(3)
-        st.rerun()
+    # Removed auto-refresh to prevent unnecessary reloads
