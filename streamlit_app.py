@@ -411,12 +411,17 @@ def main():
         st.markdown("## 📊 Connection Status")
         if st.session_state.proxy_connected:
             metrics = st.session_state.proxy_metrics
-            if metrics['http_ok'] and metrics['https_ok']:
+            http_ok = metrics.get('http_ok', False)
+            https_ok = metrics.get('https_ok', False)
+            
+            if http_ok and https_ok:
                 st.markdown('<div class="proxy-status-connected">🟢 Connected (HTTP + HTTPS)</div>', unsafe_allow_html=True)
-            elif metrics['http_ok']:
+            elif http_ok:
                 st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTP only)</div>', unsafe_allow_html=True)
-            else:
+            elif https_ok:
                 st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTPS only)</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="proxy-status-warning">🟡 Connected (Limited)</div>', unsafe_allow_html=True)
                 
             if st.session_state.connection_start_time:
                 duration = datetime.now() - st.session_state.connection_start_time
@@ -424,8 +429,9 @@ def main():
             st.text(f"Server: {st.session_state.current_proxy}")
             st.text(f"Location: {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country}")
             st.text(f"Latency: {st.session_state.proxy_metrics.get('latency', 0)}ms")
-            if st.session_state.proxy_metrics.get('ip_detected'):
-                st.text(f"External IP: {st.session_state.proxy_metrics['ip_detected']}")
+            detected_ip = st.session_state.proxy_metrics.get('ip_detected')
+            if detected_ip:
+                st.text(f"External IP: {detected_ip}")
         else:
             st.markdown('<div class="proxy-status-disconnected">🔴 Disconnected</div>', unsafe_allow_html=True)
             st.info("Select a proxy server to test connection")
@@ -439,12 +445,17 @@ def main():
             metrics = st.session_state.proxy_metrics
             
             # Show actual connection status
-            if metrics['http_ok'] and metrics['https_ok']:
+            http_ok = metrics.get('http_ok', False)
+            https_ok = metrics.get('https_ok', False)
+            
+            if http_ok and https_ok:
                 st.success(f"🟢 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (Full Support)")
-            elif metrics['http_ok']:
+            elif http_ok:
                 st.warning(f"🟡 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (HTTP Only)")
-            else:
+            elif https_ok:
                 st.warning(f"🟡 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (HTTPS Only)")
+            else:
+                st.info(f"🔵 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (Testing)"))
                 
             st.info(f"Server: {st.session_state.current_proxy}")
 
@@ -489,11 +500,11 @@ def main():
             
             col2a, col2b = st.columns(2)
             with col2a:
-                http_status = "✅ Working" if metrics.get('http_ok') else "❌ Failed"
+                http_status = "✅ Working" if metrics.get('http_ok', False) else "❌ Failed"
                 st.metric("HTTP Support", http_status)
                 
             with col2b:
-                https_status = "✅ Working" if metrics.get('https_ok') else "❌ Failed"
+                https_status = "✅ Working" if metrics.get('https_ok', False) else "❌ Failed"
                 st.metric("HTTPS Tunneling", https_status)
 
             # Show detected IP if available
