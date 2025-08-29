@@ -10,6 +10,8 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+import requests
+import streamlit.components.v1 as components
 
 # ProxyStream Configuration
 st.set_page_config(
@@ -152,7 +154,7 @@ COUNTRY_IP_MAPPING = {
 }
 
 # Reverse mapping
-IP_TO_COUNTRY = {}
+IP_TO_COUNTRY: Dict[str, str] = {}
 for country, ips in COUNTRY_IP_MAPPING.items():
     for ip in ips:
         IP_TO_COUNTRY[ip] = country
@@ -165,31 +167,25 @@ def get_country_flag(country_code: str) -> str:
     return flags.get(country_code, '🏳️')
 
 def parse_proxy_list() -> Dict[str, List[str]]:
-    proxies_by_country = {}
-    
+    proxies_by_country: Dict[str, List[str]] = {}
     for proxy in PROXY_LIST:
         if ':' in proxy:
             ip = proxy.split(':')[0]
             country = IP_TO_COUNTRY.get(ip, 'US')
-            
             if country not in proxies_by_country:
                 proxies_by_country[country] = []
             proxies_by_country[country].append(proxy)
-    
     return proxies_by_country
 
 def test_proxy_connection(proxy: str) -> tuple[bool, dict]:
     delay = random.uniform(0.5, 2.0)
     time.sleep(delay)
-    
     is_success = random.choices([True, False], weights=[75, 25])[0]
-    
     metrics = {
         'latency': random.randint(10, 150) if is_success else 0,
         'speed': random.uniform(10, 100) if is_success else 0,
         'country': IP_TO_COUNTRY.get(proxy.split(':')[0], 'US')
     }
-    
     return is_success, metrics
 
 def generate_usage_data():
@@ -201,6 +197,54 @@ def generate_usage_data():
         'download': download_data,
         'upload': upload_data
     })
+
+# ---------- NEW: real HTTP fetch via active proxy ----------
+def fetch_via_proxy_requests(url: str, proxy: str, timeout: int = 12) -> Dict[str, Any]:
+    """
+    Real HTTP(S) GET via the chosen proxy using 'requests'.
+    Accepts proxy like 'IP:PORT' or 'http://IP:PORT'.
+    Returns: dict with ok/status/final_url/headers/content/elapsed_ms/error
+    """
+    hostport = proxy.split("://")[-1]
+    proxy_url = f"http://{hostport}"
+    proxies = {"http": proxy_url, "https": proxy_url}
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/123.0.0.0 Safari/537.36"
+        )
+    }
+    t0 = time.perf_counter()
+    try:
+        r = requests.get(
+            url,
+            proxies=proxies,
+            headers=headers,
+            timeout=timeout,
+            allow_redirects=True,
+            stream=False,
+        )
+        elapsed = (time.perf_counter() - t0) * 1000
+        return {
+            "ok": True,
+            "status": r.status_code,
+            "final_url": r.url,
+            "headers": dict(r.headers),
+            "content": r.content,
+            "elapsed_ms": round(elapsed, 1),
+            "error": "",
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "status": None,
+            "final_url": None,
+            "headers": {},
+            "content": b"",
+            "elapsed_ms": round((time.perf_counter() - t0) * 1000, 1),
+            "error": str(e)[:200],
+        }
 
 # Initialize session state
 if "proxy_connected" not in st.session_state:
@@ -215,6 +259,9 @@ if "selected_country" not in st.session_state:
     st.session_state.selected_country = "US"
 if "proxy_metrics" not in st.session_state:
     st.session_state.proxy_metrics = {"latency": 0, "speed": 0}
+# NEW: track an active proxy for real browsing
+if "active_proxy" not in st.session_state:
+    st.session_state.active_proxy = None  # "http://IP:PORT"
 
 # Parse proxy list
 proxy_data = parse_proxy_list()
@@ -285,6 +332,8 @@ def main():
                                 st.session_state.current_proxy = selected_proxy
                                 st.session_state.connection_start_time = datetime.now()
                                 st.session_state.proxy_metrics = metrics
+                                # NEW: set active proxy for browsing
+                                st.session_state.active_proxy = f"http://{selected_proxy}"
                                 st.success("Connected successfully!")
                                 st.rerun()
                             else:
@@ -297,6 +346,8 @@ def main():
                                         st.session_state.current_proxy = backup_proxy
                                         st.session_state.connection_start_time = datetime.now()
                                         st.session_state.proxy_metrics = metrics
+                                        # NEW: set active proxy for browsing
+                                        st.session_state.active_proxy = f"http://{backup_proxy}"
                                         st.success(f"Connected to backup server!")
                                         st.rerun()
                 
@@ -306,6 +357,8 @@ def main():
                         st.session_state.current_proxy = None
                         st.session_state.connection_start_time = None
                         st.session_state.proxy_metrics = {"latency": 0, "speed": 0}
+                        # NEW: clear active proxy
+                        st.session_state.active_proxy = None
                         st.success("Disconnected!")
                         st.rerun()
         
@@ -416,6 +469,69 @@ def main():
             total_proxies = sum(len(proxies) for proxies in proxy_data.values())
             st.metric("Available Servers", f"{total_proxies:,}", delta=f"+{random.randint(5, 20)}")
 
+        # ----------- NEW: Browse via Current Connection (keeps your UI) -----------
+        st.markdown("---")
+        st.markdown("### 🔎 Browse via Current Connection")
+
+        if not st.session_state.active_proxy:
+            st.info("Connect to a server first to enable browsing.")
+        else:
+            urls = st.text_area(
+                "Enter one or more URLs (one per line):",
+                value="https://httpbin.org/ip\nhttps://example.com",
+                height=90,
+                help="We’ll fetch these pages through your active proxy."
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                browse_timeout = st.slider("Request timeout (seconds)", 3, 30, 12)
+            with c2:
+                go_browse = st.button("🌐 Go", use_container_width=True)
+
+            if go_browse:
+                targets = [u.strip() for u in urls.splitlines() if u.strip()]
+                if not targets:
+                    st.warning("Please enter at least one URL.")
+                else:
+                    for u in targets:
+                        st.markdown(f"**Target:** {u}")
+                        with st.spinner("Fetching via active proxy…"):
+                            res = fetch_via_proxy_requests(u, st.session_state.active_proxy, timeout=browse_timeout)
+
+                        if not res["ok"]:
+                            st.error(f"Error: {res['error']}")
+                            st.markdown("---")
+                            continue
+
+                        st.markdown(
+                            f"**Status:** {res['status']} &nbsp;&nbsp;|&nbsp;&nbsp; "
+                            f"**Elapsed:** {res['elapsed_ms']} ms &nbsp;&nbsp;|&nbsp;&nbsp; "
+                            f"**Final URL:** {res['final_url']}"
+                        )
+                        ct = res["headers"].get("content-type", "").lower()
+
+                        with st.expander("Response headers"):
+                            st.json(res["headers"])
+
+                        if "text/html" in ct:
+                            html = res["content"].decode("utf-8", errors="ignore")
+                            components.html(html, height=600, scrolling=True)
+                            st.download_button("Download HTML", data=html.encode(), file_name="page.html")
+                        elif "json" in ct or "javascript" in ct:
+                            try:
+                                st.json(json.loads(res["content"]))
+                            except Exception:
+                                st.code(res["content"][:2000])
+                            st.download_button("Download JSON", data=res["content"], file_name="response.json")
+                        elif any(x in ct for x in ["png", "jpeg", "jpg", "gif", "webp"]):
+                            st.image(res["content"])
+                            st.download_button("Download image", data=res["content"], file_name="image.bin")
+                        else:
+                            st.code(res["content"][:2000])
+                            st.download_button("Download body", data=res["content"], file_name="response.bin")
+
+                        st.markdown("---")
+
     else:
         # Disconnected state
         st.markdown("### 🔌 Not Connected")
@@ -454,6 +570,7 @@ if __name__ == "__main__":
     main()
 
     # Auto-refresh for live updates when connected
+    # Note: If this clears your browsing results too fast, increase the sleep to ~10-15s.
     if st.session_state.proxy_connected:
         time.sleep(3)
         st.rerun()
