@@ -455,7 +455,7 @@ def main():
             elif https_ok:
                 st.warning(f"🟡 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (HTTPS Only)")
             else:
-                st.info(f"🔵 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (Testing)"))
+                st.info(f"🔵 Connected via {get_country_flag(st.session_state.selected_country)} {st.session_state.selected_country} (Testing)")
                 
             st.info(f"Server: {st.session_state.current_proxy}")
 
