@@ -24,7 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# -------------------- THEME / CSS (unchanged look) --------------------
+# -------------------- THEME / CSS (appearance preserved) --------------------
 st.markdown("""
 <style>
     .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); color: white; }
@@ -127,16 +127,18 @@ def get_country_flag(cc: str) -> str:
     return flags.get(cc, '🏳️')
 
 def parse_proxy_list(proxies: List[str]) -> Dict[str, List[str]]:
+    """Group proxies by country using our mapping (unknown → US)."""
     buckets: Dict[str, List[str]] = {}
     for proxy in proxies:
-        if ':' not in proxy: 
+        if ':' not in proxy:
             continue
         ip = proxy.split(':')[0].strip()
-        cc = IP_TO_COUNTRY.get(ip, 'US')  # unknowns bucketed as US for now
+        cc = IP_TO_COUNTRY.get(ip, 'US')
         buckets.setdefault(cc, []).append(proxy)
     return buckets
 
 def test_proxy_connection(proxy: str) -> tuple[bool, dict]:
+    # Simulated "connect" test used by the UI
     time.sleep(random.uniform(0.5, 2.0))
     is_success = random.choices([True, False], weights=[75, 25])[0]
     return is_success, {
@@ -145,8 +147,13 @@ def test_proxy_connection(proxy: str) -> tuple[bool, dict]:
         'country': IP_TO_COUNTRY.get(proxy.split(':')[0], 'US')
     }
 
+# ---- FIXED: lowercase 'h' to silence pandas FutureWarning
 def generate_usage_data():
-    hours = pd.date_range(start=datetime.now()-timedelta(hours=24), end=datetime.now(), freq='H')
+    hours = pd.date_range(
+        start=datetime.now() - timedelta(hours=24),
+        end=datetime.now(),
+        freq="h"  # <-- lowercase 'h' (was 'H')
+    )
     return pd.DataFrame({
         'time': hours,
         'download': np.random.exponential(scale=50, size=len(hours)),
@@ -269,6 +276,22 @@ if "only_common_ports" not in st.session_state:
 if "skip_tcp_precheck" not in st.session_state:
     st.session_state.skip_tcp_precheck = True
 
+# -------------------- FIX: Robust list-control helper (avoids slider crash) --------------------
+def servers_to_list_control(n: int) -> Tuple[int, bool]:
+    """
+    Returns (max_show, shuffle_list). Avoids Streamlit slider min==max crashes.
+    For tiny lists we show a caption instead of a slider.
+    """
+    shuffle = st.checkbox("Shuffle", True)
+    if n <= 1:
+        st.caption(f"Servers available: {n}")
+        return n, shuffle
+    max_slider = min(500, n)
+    default = min(50, n)
+    step = 1 if n < 20 else 10
+    val = st.slider("Servers to list", 1, max_slider, default, step=step)
+    return val, shuffle
+
 # -------------------- App --------------------
 def main():
     st.markdown('<div class="main-header">🛡️ ProxyStream</div>', unsafe_allow_html=True)
@@ -299,9 +322,11 @@ def main():
         filtered = all_proxies
         if st.session_state.only_common_ports:
             COMMON = {80, 8080, 3128, 443}
-            def okp(p): 
-                try: return int(p.split(":")[1]) in COMMON
-                except: return False
+            def okp(p):
+                try:
+                    return int(p.split(":")[1]) in COMMON
+                except:
+                    return False
             filtered = [p for p in all_proxies if okp(p)]
 
         proxy_data = parse_proxy_list(filtered)
@@ -336,60 +361,65 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-            # List controls (keeps UI fast without "shortening")
-            colctl1, colctl2 = st.columns(2)
-            with colctl1:
-                max_show = st.slider("Servers to list", 10, min(500, len(country_proxies)), min(50, len(country_proxies)), step=10)
-            with colctl2:
-                shuffle_list = st.checkbox("Shuffle", True)
-            filter_text = st.text_input("Filter (IP or :port)", "")
+            if country_proxies:
+                # List controls (keeps UI fast without "shortening")
+                n_country = len(country_proxies)
+                max_show, shuffle_list = servers_to_list_control(n_country)
+                filter_text = st.text_input("Filter (IP or :port)", "")
 
-            display_proxies = country_proxies.copy()
-            if shuffle_list: random.shuffle(display_proxies)
-            if filter_text.strip():
-                term = filter_text.strip()
-                display_proxies = [p for p in display_proxies if term in p]
-            display_proxies = display_proxies[:max_show]
+                display_proxies = country_proxies.copy()
+                if shuffle_list:
+                    random.shuffle(display_proxies)
+                if filter_text.strip():
+                    term = filter_text.strip()
+                    display_proxies = [p for p in display_proxies if term in p]
+                display_proxies = display_proxies[:max_show]
 
-            # Proxy selection
-            selected_proxy = st.selectbox("Proxy Server", options=display_proxies, help="Select a proxy server from the available list")
+                # Proxy selection
+                selected_proxy = st.selectbox(
+                    "Proxy Server",
+                    options=display_proxies,
+                    help="Select a proxy server from the available list"
+                )
 
-            # Connect / Disconnect
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🔗 Connect", use_container_width=True):
-                    with st.spinner("Testing connection..."):
-                        success, metrics = test_proxy_connection(selected_proxy)
-                        if success:
-                            st.session_state.proxy_connected = True
-                            st.session_state.current_proxy = selected_proxy
-                            st.session_state.connection_start_time = datetime.now()
-                            st.session_state.proxy_metrics = metrics
-                            st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
-                            st.success("Connected successfully!")
-                            st.rerun()
-                        else:
-                            st.error("Connection failed - trying next server...")
-                            if len(display_proxies) > 1:
-                                backup_proxy = random.choice([p for p in display_proxies if p != selected_proxy])
-                                success, metrics = test_proxy_connection(backup_proxy)
-                                if success:
-                                    st.session_state.proxy_connected = True
-                                    st.session_state.current_proxy = backup_proxy
-                                    st.session_state.connection_start_time = datetime.now()
-                                    st.session_state.proxy_metrics = metrics
-                                    st.session_state.active_proxy = normalize_proxy_http(backup_proxy)
-                                    st.success("Connected to backup server!")
-                                    st.rerun()
-            with col2:
-                if st.button("❌ Disconnect", use_container_width=True):
-                    st.session_state.proxy_connected = False
-                    st.session_state.current_proxy = None
-                    st.session_state.connection_start_time = None
-                    st.session_state.proxy_metrics = {"latency": 0, "speed": 0}
-                    st.session_state.active_proxy = None
-                    st.success("Disconnected!")
-                    st.rerun()
+                # Connect / Disconnect
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔗 Connect", use_container_width=True):
+                        with st.spinner("Testing connection..."):
+                            success, metrics = test_proxy_connection(selected_proxy)
+                            if success:
+                                st.session_state.proxy_connected = True
+                                st.session_state.current_proxy = selected_proxy
+                                st.session_state.connection_start_time = datetime.now()
+                                st.session_state.proxy_metrics = metrics
+                                st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
+                                st.success("Connected successfully!")
+                                st.rerun()
+                            else:
+                                st.error("Connection failed - trying next server...")
+                                if len(display_proxies) > 1:
+                                    backup_proxy = random.choice([p for p in display_proxies if p != selected_proxy])
+                                    success, metrics = test_proxy_connection(backup_proxy)
+                                    if success:
+                                        st.session_state.proxy_connected = True
+                                        st.session_state.current_proxy = backup_proxy
+                                        st.session_state.connection_start_time = datetime.now()
+                                        st.session_state.proxy_metrics = metrics
+                                        st.session_state.active_proxy = normalize_proxy_http(backup_proxy)
+                                        st.success("Connected to backup server!")
+                                        st.rerun()
+                with col2:
+                    if st.button("❌ Disconnect", use_container_width=True):
+                        st.session_state.proxy_connected = False
+                        st.session_state.current_proxy = None
+                        st.session_state.connection_start_time = None
+                        st.session_state.proxy_metrics = {"latency": 0, "speed": 0}
+                        st.session_state.active_proxy = None
+                        st.success("Disconnected!")
+                        st.rerun()
+            else:
+                st.info("No servers in this country (or your filter removed them). Try another country or relax the filter.")
 
         # Connection Status
         st.markdown("---")
@@ -557,6 +587,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # Auto-refresh for live updates when connected
     if st.session_state.proxy_connected:
         time.sleep(3)
         st.rerun()
