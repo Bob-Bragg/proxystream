@@ -652,12 +652,6 @@ def main():
     st.markdown('<div class="main-header">🛡️ ProxyStream Premium</div>', unsafe_allow_html=True)
     st.markdown('<p style="text-align: center; color: #94a3b8; font-size: 16px; margin-bottom: 40px;">Advanced Proxy Testing & Chain Analysis Platform</p>', unsafe_allow_html=True)
 
-    # Force sidebar to be visible
-    if not st.sidebar:
-        st.markdown("### ⚠️ Sidebar Missing")
-        st.error("The sidebar is not visible. Please refresh the page or check your browser settings.")
-        return
-
     # Security warning
     st.markdown("""
     <div class="security-warning">
@@ -675,18 +669,266 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Load proxy data first
+    # Load proxy data
     all_proxies, source_used, load_errors = load_proxy_list(st.session_state.force_reload_key)
 
-    # SIDEBAR SECTION - Make it more prominent
-    with st.sidebar:
-        st.markdown("# 🔧 Controls")
+    # MAIN CONTROLS SECTION (since sidebar isn't working)
+    st.markdown("---")
+    st.markdown("## 🔧 Proxy Controls")
+    
+    # Try sidebar first, then fallback to main area
+    sidebar_content = st.sidebar if hasattr(st, 'sidebar') else st
+    
+    # Check if we should show controls in main area
+    show_main_controls = True
+    
+    try:
+        with st.sidebar:
+            st.markdown("# 🔧 Controls")
+            show_main_controls = False
+    except:
+        show_main_controls = True
+    
+    if show_main_controls:
+        # Put controls in main area since sidebar failed
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.markdown("### Connection Mode")
+            connection_mode = st.radio(
+                "Select connection type:",
+                options=["single", "chain"],
+                index=0 if st.session_state.connection_mode == "single" else 1,
+                format_func=lambda x: "🔗 Single Proxy" if x == "single" else "⛓️ Proxy Chain",
+                horizontal=False
+            )
+            st.session_state.connection_mode = connection_mode
+            
+            st.markdown("### Your Location")
+            if st.button("📍 Detect My Location"):
+                with st.spinner("Detecting your location..."):
+                    user_loc = get_user_location()
+                    if user_loc:
+                        st.session_state.user_location = user_loc
+                        st.success(f"Located: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}")
+                        st.rerun()
+                    else:
+                        st.error("Could not detect location")
+            
+            if st.session_state.user_location:
+                user_loc = st.session_state.user_location
+                st.markdown(f"""
+                <div class="location-card">
+                    <strong>🏠 Your Location</strong><br>
+                    📍 {user_loc.get('city', 'Unknown')}, {user_loc.get('region', 'Unknown')}<br>
+                    🏳️ {user_loc.get('country', 'Unknown')}<br>
+                    🌐 IP: {user_loc.get('ip', 'Unknown')}<br>
+                    🏢 ISP: {user_loc.get('isp', 'Unknown')[:30]}...
+                </div>
+                """, unsafe_allow_html=True)
+        
+        with col2:
+            # Main proxy selection and controls
+            st.markdown("### Proxy Settings")
+            
+            # Filter options
+            with st.expander("Advanced Settings"):
+                st.session_state.only_common_ports = st.checkbox("Only common ports 80/8080/3128/443", value=st.session_state.only_common_ports)
+                col_ref1, col_ref2 = st.columns([3,1])
+                with col_ref1:
+                    st.caption(f"Source: {source_used}")
+                    if source_used == "fallback":
+                        st.warning("Using fallback list", icon="⚠️")
+                with col_ref2:
+                    if st.button("↻ Refresh"):
+                        st.session_state.force_reload_key += 1
+                        st.rerun()
+
+            # Process proxy data
+            filtered = all_proxies
+            if st.session_state.only_common_ports:
+                COMMON = {80, 8080, 3128, 443}
+                def okp(p):
+                    try:
+                        return int(p.split(":")[1]) in COMMON
+                    except:
+                        return False
+                filtered = [p for p in all_proxies if okp(p)]
+
+            proxy_data = parse_proxy_list(filtered)
+            total_proxies = sum(len(v) for v in proxy_data.values())
+            
+            st.info(f"📊 Network: {total_proxies:,} servers across {len(proxy_data)} countries")
+            
+            # Country Selection
+            available_countries = list(proxy_data.keys())
+            if available_countries:
+                selected_country = st.selectbox(
+                    "Select Country",
+                    options=available_countries,
+                    index=available_countries.index(st.session_state.selected_country) if st.session_state.selected_country in available_countries else 0,
+                    format_func=lambda x: f"{get_country_flag(x)} {x}"
+                )
+                st.session_state.selected_country = selected_country
+
+                country_proxies = proxy_data[selected_country]
+                
+                if country_proxies:
+                    # Show limited proxies for performance
+                    display_proxies = country_proxies[:50]  # Limit to 50 for performance
+                    if len(country_proxies) > 50:
+                        st.caption(f"Showing first 50 of {len(country_proxies)} servers")
+
+                    # Single Proxy Mode
+                    if st.session_state.connection_mode == "single":
+                        selected_proxy = st.selectbox("Proxy Server", options=display_proxies)
+
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("🧪 Test Connection", use_container_width=True):
+                                with st.spinner("Testing proxy..."):
+                                    success, metrics = test_proxy_connection(selected_proxy)
+                                    if success:
+                                        st.session_state.proxy_connected = True
+                                        st.session_state.current_proxy = selected_proxy
+                                        st.session_state.connection_start_time = datetime.now()
+                                        st.session_state.proxy_metrics = metrics
+                                        st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
+                                        st.session_state.proxy_location = metrics.get('location')
+                                        
+                                        if metrics['http_ok'] and metrics['https_ok']:
+                                            st.success("✅ Proxy working! HTTP & HTTPS supported")
+                                        elif metrics['http_ok']:
+                                            st.warning("⚠️ Proxy working! HTTP only")
+                                        else:
+                                            st.warning("⚠️ Proxy working! HTTPS only")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Proxy failed: {metrics.get('error', 'Unknown error')}")
+
+                        with col2:
+                            if st.button("❌ Disconnect", use_container_width=True):
+                                st.session_state.proxy_connected = False
+                                st.session_state.current_proxy = None
+                                st.session_state.connection_start_time = None
+                                st.session_state.proxy_metrics = {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False}
+                                st.session_state.active_proxy = None
+                                st.session_state.proxy_location = None
+                                st.success("Disconnected!")
+                                st.rerun()
+
+                    # Chain Mode
+                    else:
+                        st.markdown("#### ⛓️ Chain Builder")
+                        
+                        # Current chain display
+                        if st.session_state.proxy_chain:
+                            st.markdown("**Current Chain:**")
+                            for i, proxy in enumerate(st.session_state.proxy_chain):
+                                col1, col2, col3 = st.columns([1, 4, 1])
+                                with col1:
+                                    st.markdown(f"**{i+1}**")
+                                with col2:
+                                    host = proxy.split(':')[0]
+                                    country = IP_TO_COUNTRY.get(host, 'US')
+                                    st.markdown(f"{get_country_flag(country)} `{proxy}`")
+                                with col3:
+                                    if st.button("✕", key=f"remove_{i}", help="Remove from chain"):
+                                        st.session_state.proxy_chain.pop(i)
+                                        st.rerun()
+                        
+                        # Add proxy to chain
+                        selected_proxy = st.selectbox("Add Proxy to Chain", options=display_proxies)
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("➕ Add to Chain"):
+                                if selected_proxy not in st.session_state.proxy_chain:
+                                    if len(st.session_state.proxy_chain) < 5:
+                                        st.session_state.proxy_chain.append(selected_proxy)
+                                        st.rerun()
+                                    else:
+                                        st.error("Maximum 5 hops allowed")
+                                else:
+                                    st.warning("Proxy already in chain")
+                        
+                        with col2:
+                            if st.button("🧹 Clear Chain"):
+                                st.session_state.proxy_chain = []
+                                st.session_state.chain_connected = False
+                                st.session_state.chain_metrics = {}
+                                st.session_state.chain_locations = None
+                                st.rerun()
+                        
+                        # Chain operations
+                        if len(st.session_state.proxy_chain) >= 2:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                if st.button("🧪 Test Chain"):
+                                    with st.spinner(f"Testing {len(st.session_state.proxy_chain)}-hop chain..."):
+                                        success, metrics = test_proxy_chain(st.session_state.proxy_chain)
+                                        if success:
+                                            st.session_state.chain_connected = True
+                                            st.session_state.chain_metrics = metrics
+                                            st.session_state.chain_locations = get_chain_geolocation(st.session_state.proxy_chain)
+                                            st.session_state.connection_start_time = datetime.now()
+                                            st.success(f"✅ Chain operational!")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ Chain failed: {metrics.get('error', 'Unknown error')}")
+                            
+                            with col2:
+                                if st.button("⚡ Optimize"):
+                                    with st.spinner("Optimizing chain..."):
+                                        try:
+                                            optimized = optimize_proxy_chain(st.session_state.proxy_chain)
+                                            if len(optimized) >= 2:
+                                                st.session_state.proxy_chain = optimized
+                                                st.success(f"✅ Optimized to {len(optimized)} hops")
+                                                st.rerun()
+                                            else:
+                                                st.error("❌ Not enough working proxies")
+                                        except Exception as e:
+                                            st.error(f"Optimization failed: {str(e)}")
+                        
+                        elif len(st.session_state.proxy_chain) == 1:
+                            st.info("💡 Add at least one more proxy to create a chain")
+        
+        # Connection Status
         st.markdown("---")
+        st.markdown("### 📊 Connection Status")
         
-        # Add a visible indicator that sidebar is working
-        st.success("✅ Sidebar Active")
-        
-        st.markdown("## Connection Settings")
+        if st.session_state.connection_mode == "single" and st.session_state.proxy_connected:
+            metrics = st.session_state.proxy_metrics
+            http_ok = metrics.get('http_ok', False)
+            https_ok = metrics.get('https_ok', False)
+            
+            if http_ok and https_ok:
+                st.markdown('<div class="proxy-status-connected">🟢 Connected (Full)</div>', unsafe_allow_html=True)
+            elif http_ok:
+                st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTP)</div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTPS)</div>', unsafe_allow_html=True)
+                
+            st.text(f"Server: {st.session_state.current_proxy}")
+            st.text(f"Latency: {metrics.get('latency', 0)}ms")
+            
+        elif st.session_state.connection_mode == "chain" and st.session_state.chain_connected:
+            metrics = st.session_state.chain_metrics
+            st.markdown('<div class="proxy-status-connected">🟢 Chain Active</div>', unsafe_allow_html=True)
+            st.text(f"Hops: {metrics.get('chain_length', 0)}")
+            st.text(f"Total Latency: {metrics.get('chain_latency', 0)}ms")
+            st.text(f"Anonymization: {metrics.get('anonymization_level', 0)}%")
+            
+        else:
+            st.markdown('<div class="proxy-status-disconnected">🔴 Disconnected</div>', unsafe_allow_html=True)
+            st.info("Configure and test a connection above")
+
+    else:
+        # Original sidebar code (this should work if sidebar is available)
+        with st.sidebar:
+            # ... (rest of the original sidebar code)
+            pass
         
         # Connection Mode Selection
         st.markdown("### Connection Mode")
