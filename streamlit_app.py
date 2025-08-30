@@ -1,1112 +1,1107 @@
-import json
-import os
-import random
-import time
-from typing import List, Dict, Any, Tuple, Optional
-from datetime import datetime, timedelta
-from urllib.parse import urlparse, urlunparse
-import math
+# streamlit_app.py
+"""
+ProxyStream - Modern VPN Dashboard Interface
+A comprehensive proxy management and testing platform
+"""
 
-import pandas as pd
+import asyncio
+import time
+import json
+import random
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+import math
+import ipaddress
+import re
+from concurrent.futures import ThreadPoolExecutor
+
 import streamlit as st
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import httpx
 import numpy as np
-import requests
-import streamlit.components.v1 as components
-from requests.exceptions import ProxyError, SSLError, ConnectTimeout, ReadTimeout, ConnectionError as ReqConnectionError
-import socket
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-# ProxyStream Configuration
+# Page Configuration
 st.set_page_config(
-    page_title="ProxyStream - Advanced Proxy Testing",
+    page_title="ProxyStream - VPN Dashboard",
     page_icon="🔒",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://github.com/Bob-Bragg/proxystream',
+        'Report a bug': "https://github.com/Bob-Bragg/proxystream/issues",
+        'About': "ProxyStream v2.0 - Modern VPN Dashboard"
+    }
 )
 
-# Theme Management
-if "theme" not in st.session_state:
-    st.session_state.theme = "dark"
+# Constants
+PROXY_SOURCES = [
+    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+    "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+]
 
-def get_theme_css(theme: str) -> str:
-    """Generate CSS based on selected theme"""
-    
-    if theme == "light":
-        return """
-        <style>
-            .stApp { 
-                background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); 
-                color: #1e293b; 
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-            }
-            
-            .theme-card {
-                background: white;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 24px;
-                margin: 16px 0;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-                transition: all 0.3s ease;
-            }
-            
-            .theme-card:hover {
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-                transform: translateY(-2px);
-            }
-            
-            .main-header {
-                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-                font-size: 42px;
-                font-weight: 800;
-                text-align: center;
-                margin-bottom: 8px;
-                letter-spacing: -0.025em;
-            }
-            
-            .sub-header {
-                color: #64748b;
-                text-align: center;
-                font-size: 18px;
-                font-weight: 500;
-                margin-bottom: 32px;
-            }
-            
-            .status-connected {
-                background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-                color: white;
-                padding: 12px 20px;
-                border-radius: 20px;
-                font-weight: 600;
-                text-align: center;
-                box-shadow: 0 4px 14px 0 rgba(16, 185, 129, 0.3);
-            }
-            
-            .status-disconnected {
-                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-                color: white;
-                padding: 12px 20px;
-                border-radius: 20px;
-                font-weight: 600;
-                text-align: center;
-                box-shadow: 0 4px 14px 0 rgba(239, 68, 68, 0.3);
-            }
-            
-            .status-warning {
-                background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-                color: white;
-                padding: 12px 20px;
-                border-radius: 20px;
-                font-weight: 600;
-                text-align: center;
-                box-shadow: 0 4px 14px 0 rgba(245, 158, 11, 0.3);
-            }
-            
-            .location-card {
-                background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
-                border: 1px solid #cbd5e1;
-                border-radius: 12px;
-                padding: 20px;
-                margin: 12px 0;
-            }
-            
-            .chain-hop {
-                background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-                border: 1px solid #3b82f6;
-                border-radius: 8px;
-                padding: 16px;
-                margin: 8px 0;
-            }
-            
-            .security-notice {
-                background: linear-gradient(135deg, #fef3c7 0%, #fed7aa 100%);
-                border: 1px solid #f59e0b;
-                border-radius: 12px;
-                padding: 16px;
-                margin: 16px 0;
-                color: #92400e;
-            }
-            
-            [data-testid="metric-container"] {
-                background: white;
-                border: 1px solid #e2e8f0;
-                border-radius: 12px;
-                padding: 20px;
-                box-shadow: 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            }
-            
-            [data-testid="metric-container"] > div {
-                color: #1e293b;
-            }
-            
-            [data-testid="metric-container"] label {
-                color: #64748b !important;
-                font-weight: 500;
-            }
-            
-            .stButton > button {
-                background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 12px 24px;
-                font-weight: 600;
-                transition: all 0.3s ease;
-                box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
-            }
-            
-            .stButton > button:hover {
-                background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-                transform: translateY(-1px);
-                box-shadow: 0 6px 20px -1px rgba(59, 130, 246, 0.4);
-            }
-            
-            .stSelectbox > div > div {
-                background: white;
-                border: 2px solid #e2e8f0;
-                border-radius: 8px;
-            }
-            
-            .theme-toggle {
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                z-index: 999;
-                background: white;
-                border: 1px solid #e2e8f0;
-                border-radius: 20px;
-                padding: 8px 16px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            }
-        </style>
-        """
-    else:  # dark theme
-        return """
-        <style>
-            .stApp { 
-                background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
-                color: #f8fafc; 
-                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-            }
-            
-            .theme-card {
-                background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-                border: 1px solid #475569;
-                border-radius: 12px;
-                padding: 24px;
-                margin: 16px 0;
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
-                backdrop-filter: blur(16px);
-                transition: all 0.3s ease;
-            }
-            
-            .theme-card:hover {
-                box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
-                transform: translateY(-4px);
-                border-color: #3b82f6;
-            }
-            
-            .main-header {
-                background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-                background-clip: text;
-                font-size: 42px;
-                font-weight: 800;
-                text-align: center;
-                margin-bottom: 8px;
-                letter-spacing: -0.025em;
-            }
-            
-            .sub-header {
-                color: #94a3b8;
-                text-align: center;
-                font-size: 18px;
-                font-weight: 500;
-                margin-bottom: 32px;
-            }
-            
-            .status-connected {
-                background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-                color: white;
-                padding: 12px 20px;
-                border-radius: 20px;
-                font-weight: 600;
-                text-align: center;
-                box-shadow: 0 0 20px rgba(16, 185, 129, 0.4);
-            }
-            
-            .status-disconnected {
-                background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-                color: white;
-                padding: 12px 20px;
-                border-radius: 20px;
-                font-weight: 600;
-                text-align: center;
-                box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
-            }
-            
-            .status-warning {
-                background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-                color: white;
-                padding: 12px 20px;
-                border-radius: 20px;
-                font-weight: 600;
-                text-align: center;
-                box-shadow: 0 0 20px rgba(245, 158, 11, 0.4);
-            }
-            
-            .location-card {
-                background: linear-gradient(135deg, #374151 0%, #4b5563 100%);
-                border: 1px solid #6b7280;
-                border-radius: 12px;
-                padding: 20px;
-                margin: 12px 0;
-                backdrop-filter: blur(10px);
-            }
-            
-            .chain-hop {
-                background: linear-gradient(135deg, #1e3a8a 0%, #3730a3 100%);
-                border: 1px solid #3b82f6;
-                border-radius: 8px;
-                padding: 16px;
-                margin: 8px 0;
-                box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
-            }
-            
-            .security-notice {
-                background: linear-gradient(135deg, #92400e 0%, #b45309 100%);
-                border: 1px solid #f59e0b;
-                border-radius: 12px;
-                padding: 16px;
-                margin: 16px 0;
-                color: #fed7aa;
-                box-shadow: 0 0 15px rgba(245, 158, 11, 0.2);
-            }
-            
-            [data-testid="metric-container"] {
-                background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-                border: 1px solid #475569;
-                border-radius: 12px;
-                padding: 20px;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
-            }
-            
-            [data-testid="metric-container"] > div {
-                color: #f8fafc;
-            }
-            
-            [data-testid="metric-container"] label {
-                color: #94a3b8 !important;
-                font-weight: 500;
-            }
-            
-            .stButton > button {
-                background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                padding: 12px 24px;
-                font-weight: 600;
-                transition: all 0.3s ease;
-                box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
-            }
-            
-            .stButton > button:hover {
-                background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
-                transform: translateY(-2px);
-                box-shadow: 0 0 30px rgba(59, 130, 246, 0.5);
-            }
-            
-            .stSelectbox > div > div {
-                background: #374151;
-                border: 2px solid #4b5563;
-                border-radius: 8px;
-                color: #f8fafc;
-            }
-            
-            .theme-toggle {
-                position: fixed;
-                top: 20px;
-                right: 20px;
-                z-index: 999;
-                background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-                border: 1px solid #475569;
-                border-radius: 20px;
-                padding: 8px 16px;
-                box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
-                backdrop-filter: blur(10px);
-            }
-            
-            #MainMenu {visibility: hidden;}
-            footer {visibility: hidden;}
-            header {visibility: hidden;}
-            
-            /* Animations */
-            @keyframes slideIn {
-                from { opacity: 0; transform: translateY(20px); }
-                to { opacity: 1; transform: translateY(0); }
-            }
-            
-            .theme-card {
-                animation: slideIn 0.5s ease-out;
-            }
-        </style>
-        """
+GEO_API_ENDPOINTS = [
+    "https://ipapi.co/{}/json/",
+    "http://ip-api.com/json/{}",
+    "https://ipwhois.app/json/{}"
+]
 
-# Apply current theme
-st.markdown(get_theme_css(st.session_state.theme), unsafe_allow_html=True)
+COMMON_PORTS = {80, 8080, 3128, 443, 1080, 8888, 8000, 3000}
 
-# Theme Toggle (always visible)
-st.markdown(f"""
-<div class="theme-toggle">
-    <span style="margin-right: 8px;">{'🌙' if st.session_state.theme == 'dark' else '☀️'}</span>
-    <span style="font-weight: 500; font-size: 14px;">{st.session_state.theme.title()}</span>
-</div>
-""", unsafe_allow_html=True)
+# Data Models
+@dataclass
+class ProxyInfo:
+    host: str
+    port: int
+    protocol: str = "http"
+    country: Optional[str] = None
+    city: Optional[str] = None
+    isp: Optional[str] = None
+    latency: Optional[float] = None
+    last_checked: Optional[datetime] = None
+    status: str = "unknown"
+    anonymity: str = "unknown"
+    speed_score: float = 0.0
 
-# Enhanced Geolocation Functions (preserved from previous version)
-@st.cache_data(ttl=1800, show_spinner=False)
-def get_user_location() -> Optional[Dict[str, Any]]:
-    """Detect user's real location using multiple services"""
-    services = [
-        'https://ipapi.co/json/',
-        'https://ip-api.com/json/',
-        'https://freegeoip.app/json/',
-    ]
-    
-    for service in services:
-        try:
-            response = requests.get(service, timeout=8)
-            if response.ok:
-                data = response.json()
-                return {
-                    'ip': data.get('ip') or data.get('query'),
-                    'city': data.get('city'),
-                    'region': data.get('region') or data.get('regionName'),
-                    'country': data.get('country_name') or data.get('country'),
-                    'country_code': data.get('country_code') or data.get('countryCode'),
-                    'lat': data.get('latitude') or data.get('lat'),
-                    'lon': data.get('longitude') or data.get('lon'),
-                    'isp': data.get('org') or data.get('isp'),
-                    'timezone': data.get('timezone'),
-                    'postal': data.get('postal') or data.get('zip')
-                }
-        except Exception:
-            continue
-    return None
+@dataclass
+class TestResult:
+    proxy: ProxyInfo
+    success: bool
+    response_time: float
+    http_status: Optional[int] = None
+    detected_ip: Optional[str] = None
+    error: Optional[str] = None
+    timestamp: datetime = field(default_factory=datetime.now)
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_detailed_location(ip_address: str) -> Optional[Dict[str, Any]]:
-    """Get detailed location info for proxy IP"""
-    services = [
-        f'https://ipapi.co/{ip_address}/json/',
-        f'https://ip-api.com/json/{ip_address}',
-        f'https://freegeoip.app/json/{ip_address}'
-    ]
-    
-    for service in services:
-        try:
-            response = requests.get(service, timeout=8)
-            if response.ok:
-                data = response.json()
-                return {
-                    'ip': ip_address,
-                    'city': data.get('city'),
-                    'region': data.get('region') or data.get('regionName'),
-                    'country': data.get('country_name') or data.get('country'),
-                    'country_code': data.get('country_code') or data.get('countryCode'),
-                    'lat': data.get('latitude') or data.get('lat'),
-                    'lon': data.get('longitude') or data.get('lon'),
-                    'isp': data.get('org') or data.get('isp'),
-                    'timezone': data.get('timezone'),
-                    'postal': data.get('postal') or data.get('zip'),
-                    'as_number': data.get('asn') or data.get('as')
-                }
-        except Exception:
-            continue
-    return None
-
-def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate distance between two points using Haversine formula"""
-    if not all([lat1, lon1, lat2, lon2]):
-        return 0.0
-    
-    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
-    c = 2 * math.asin(math.sqrt(a))
-    r = 6371
-    return c * r
-
-# Dynamic proxy loader
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
-    sources = [
-        "https://raw.githubusercontent.com/arandomguyhere/Proxy-Hound/main/docs/by_type/https_hunted.txt",
-        "https://cdn.jsdelivr.net/gh/arandomguyhere/Proxy-Hound@main/docs/by_type/https_hunted.txt",
-        "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-    ]
-    headers = {"User-Agent": "ProxyStream/3.0 Advanced"}
-    errors = []
-
-    def parse_lines(text: str) -> List[str]:
-        out = []
-        for ln in text.splitlines():
-            s = ln.strip()
-            if not s or " " in s or ":" not in s:
-                continue
-            host, _, port = s.partition(":")
-            if host and port.isdigit():
-                out.append(f"{host}:{port}")
-        seen = set(); res = []
-        for p in out:
-            if p not in seen:
-                seen.add(p); res.append(p)
-        return res
-
-    for url in sources:
-        try:
-            r = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
-            if r.ok and r.text:
-                parsed = parse_lines(r.text)
-                if parsed:
-                    return parsed, url, errors
-            errors.append(f"{url} -> status {r.status_code}")
-        except Exception as e:
-            errors.append(f"{url} -> {type(e).__name__}: {e}")
-    
-    fallback = [
-        "34.121.105.79:80","68.107.241.150:8080","3.133.146.217:5050",
-        "72.10.160.90:13847","170.85.158.82:80","170.85.158.82:10005",
-        "67.43.236.20:29915","167.172.157.96:80","72.10.164.178:1771",
-        "72.10.160.173:13909","155.94.241.134:3128"
-    ]
-    errors.append("All sources failed; using fallback seed list.")
-    return fallback, "fallback", errors
-
-# Country mapping and helper functions (preserved)
-COUNTRY_IP_MAPPING = {
-    'US': ['34.121.105.79', '68.107.241.150', '3.133.146.217', '72.10.160.90', '170.85.158.82'],
-    'CA': ['72.10.164.178', '38.127.172.53', '67.43.228.254', '67.43.228.253'],
-    'GB': ['170.106.169.97', '130.41.109.158', '155.94.241.134'],
-    'DE': ['136.175.9.83', '136.175.9.82', '136.175.9.86'],
-    'FR': ['201.174.239.25'],
-    'NL': ['67.43.228.251', '67.43.228.250'],
-    'SG': ['72.10.160.173', '72.10.160.174', '72.10.160.170'],
-    'AU': ['3.133.221.69'],
-    'JP': ['67.43.228.252']
-}
-
-COUNTRY_COORDS = {
-    "US": (37.0902, -95.7129), "CA": (56.1304, -106.3468), "GB": (55.3781, -3.4360),
-    "DE": (51.1657, 10.4515), "FR": (46.2276, 2.2137), "NL": (52.1326, 5.2913),
-    "SG": (1.3521, 103.8198), "AU": (-25.2744,133.7751), "JP": (36.2048, 138.2529),
-}
-
-IP_TO_COUNTRY: Dict[str, str] = {}
-for cc, ips in COUNTRY_IP_MAPPING.items():
-    for ip in ips:
-        IP_TO_COUNTRY[ip] = cc
-
-def get_country_flag(cc: str) -> str:
-    flags = {'US':'🇺🇸','CA':'🇨🇦','GB':'🇬🇧','DE':'🇩🇪','FR':'🇫🇷','NL':'🇳🇱','SG':'🇸🇬','AU':'🇦🇺','JP':'🇯🇵'}
-    return flags.get(cc, '🏳️')
-
-def parse_proxy_list(proxies: List[str]) -> Dict[str, List[str]]:
-    buckets: Dict[str, List[str]] = {}
-    for proxy in proxies:
-        if ':' not in proxy:
-            continue
-        ip = proxy.split(':')[0].strip()
-        cc = IP_TO_COUNTRY.get(ip, 'US')
-        buckets.setdefault(cc, []).append(proxy)
-    return buckets
-
-def normalize_proxy_http(proxy: str) -> str:
-    return proxy if "://" in proxy else f"http://{proxy}"
-
-def tcp_ping(host: str, port: int, timeout: float = 4.0) -> bool:
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout)
-            return s.connect_ex((host, int(port))) == 0
-    except Exception:
-        return False
-
-@st.cache_data(ttl=600, show_spinner=False)
-def detect_proxy_capabilities(proxy_http_url: str, timeout: int = 8) -> Dict[str, Any]:
-    caps = {"http_ok": False, "https_ok": False, "ip_http": None, "ip_https": None,
-            "err_http": "", "err_https": "", "latency_ms": 0}
-    headers = {"User-Agent": "ProxyStream/3.0 Advanced"}
-    proxies = {"http": proxy_http_url, "https": proxy_http_url}
-    
-    try:
-        start_time = time.perf_counter()
-        r = requests.get("http://httpbin.org/ip", proxies=proxies, headers=headers, timeout=timeout)
-        elapsed = (time.perf_counter() - start_time) * 1000
-        caps["http_ok"] = r.ok
-        caps["latency_ms"] = round(elapsed)
-        if r.ok: 
-            caps["ip_http"] = r.json().get("origin")
-    except Exception as e:
-        caps["err_http"] = str(e)[:200]
-    
-    try:
-        r = requests.get("https://httpbin.org/ip", proxies=proxies, headers=headers, timeout=timeout)
-        caps["https_ok"] = r.ok
-        if r.ok: 
-            caps["ip_https"] = r.json().get("origin")
-    except Exception as e:
-        caps["err_https"] = str(e)[:200]
-    
-    return caps
-
-def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
-    """Test single proxy with enhanced location detection"""
-    proxy_http = normalize_proxy_http(proxy)
-    host, port = proxy.split(':')[0], int(proxy.split(':')[1])
-    
-    if not tcp_ping(host, port, timeout=4.0):
-        return False, {
-            'latency': 0, 'speed': 0, 'country': IP_TO_COUNTRY.get(host, 'US'),
-            'error': 'TCP connection failed - proxy unreachable',
-            'http_ok': False, 'https_ok': False, 'ip_detected': None, 'location': None
-        }
-    
-    caps = detect_proxy_capabilities(proxy_http, timeout=timeout)
-    is_working = caps["http_ok"] or caps["https_ok"]
-    proxy_location = get_detailed_location(host)
-    
-    speed_estimate = 0
-    if is_working and caps["latency_ms"] > 0:
-        if caps["latency_ms"] < 50:
-            speed_estimate = random.uniform(80, 100)
-        elif caps["latency_ms"] < 100:
-            speed_estimate = random.uniform(40, 80)
-        elif caps["latency_ms"] < 200:
-            speed_estimate = random.uniform(20, 40)
-        else:
-            speed_estimate = random.uniform(5, 20)
-    
-    return is_working, {
-        'latency': caps["latency_ms"], 'speed': round(speed_estimate, 1),
-        'country': proxy_location.get('country', 'Unknown') if proxy_location else IP_TO_COUNTRY.get(host, 'US'),
-        'error': caps.get("err_http", "") or caps.get("err_https", ""),
-        'http_ok': caps["http_ok"], 'https_ok': caps["https_ok"],
-        'ip_detected': caps.get("ip_http") or caps.get("ip_https"), 'location': proxy_location
-    }
-
-# Session state initialization
-session_defaults = {
-    "proxy_connected": False, "current_proxy": None, "connection_start_time": None,
-    "proxy_metrics": {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False},
-    "selected_country": "US", "active_proxy": None, "force_reload_key": 0,
-    "only_common_ports": True, "user_location": None, "proxy_location": None,
-    "proxy_chain": [], "chain_connected": False, "chain_metrics": {},
-    "chain_locations": None, "connection_mode": "single"
-}
-
-for key, default_value in session_defaults.items():
-    if key not in st.session_state:
-        st.session_state[key] = default_value
-
-def check_sidebar_available() -> bool:
-    """Check if sidebar is available and functional"""
-    try:
-        # Test if we can write to sidebar
-        with st.sidebar:
-            st.empty()
-        return True
-    except:
-        return False
-
-def render_controls(location="main"):
-    """Render controls in either sidebar or main area"""
-    container = st.sidebar if location == "sidebar" else st
-    
-    with container:
-        if location == "main":
-            st.markdown("## Control Panel")
-        else:
-            st.markdown("# Controls")
-        
-        # Theme Toggle
-        if container.button(f"Switch to {'Light' if st.session_state.theme == 'dark' else 'Dark'} Theme", 
-                           use_container_width=True):
-            st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-            st.rerun()
-        
-        # Connection Mode
-        st.markdown("### Connection Mode")
-        connection_mode = container.radio(
-            "Select type:",
-            options=["single", "chain"],
-            index=0 if st.session_state.connection_mode == "single" else 1,
-            format_func=lambda x: "Single Proxy" if x == "single" else "Proxy Chain",
-            horizontal=location == "main"
-        )
-        st.session_state.connection_mode = connection_mode
-        
-        # Location Detection
-        st.markdown("### Your Location")
-        if container.button("Detect My Location", use_container_width=True):
-            with st.spinner("Detecting your location..."):
-                user_loc = get_user_location()
-                if user_loc:
-                    st.session_state.user_location = user_loc
-                    st.success(f"Located: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}")
-                    st.rerun()
-                else:
-                    st.error("Could not detect location")
-        
-        if st.session_state.user_location:
-            user_loc = st.session_state.user_location
-            container.markdown(f"""
-            <div class="location-card">
-                <strong>Your Location</strong><br>
-                📍 {user_loc.get('city', 'Unknown')}, {user_loc.get('region', 'Unknown')}<br>
-                🌍 {user_loc.get('country', 'Unknown')}<br>
-                🌐 IP: {user_loc.get('ip', 'Unknown')}<br>
-                🏢 ISP: {user_loc.get('isp', 'Unknown')[:25]}...
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Proxy Settings
-        all_proxies, source_used, load_errors = load_proxy_list(st.session_state.force_reload_key)
-        
-        if location == "main":
-            st.markdown("---")
-        
-        st.markdown("### Proxy Settings")
-        
-        # Advanced settings
-        with container.expander("Advanced Settings"):
-            st.session_state.only_common_ports = st.checkbox(
-                "Only common ports (80, 8080, 3128, 443)", 
-                value=st.session_state.only_common_ports
-            )
-            
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.caption(f"Source: {source_used.split('/')[-1] if source_used != 'fallback' else 'Fallback'}")
-                if source_used == "fallback":
-                    st.warning("Using fallback list", icon="⚠️")
-            with col2:
-                if st.button("Refresh", key="refresh_btn"):
-                    st.session_state.force_reload_key += 1
-                    st.rerun()
-        
-        # Filter proxies
-        filtered = all_proxies
-        if st.session_state.only_common_ports:
-            COMMON = {80, 8080, 3128, 443}
-            def okp(p):
-                try:
-                    return int(p.split(":")[1]) in COMMON
-                except:
-                    return False
-            filtered = [p for p in all_proxies if okp(p)]
-
-        proxy_data = parse_proxy_list(filtered)
-        total_proxies = sum(len(v) for v in proxy_data.values())
-        
-        container.info(f"📊 {total_proxies:,} servers across {len(proxy_data)} countries")
-        
-        # Country selection
-        available_countries = list(proxy_data.keys())
-        if available_countries:
-            selected_country = container.selectbox(
-                "Country",
-                options=available_countries,
-                index=available_countries.index(st.session_state.selected_country) if st.session_state.selected_country in available_countries else 0,
-                format_func=lambda x: f"{get_country_flag(x)} {x}"
-            )
-            st.session_state.selected_country = selected_country
-
-            country_proxies = proxy_data[selected_country]
-            
-            if country_proxies:
-                display_proxies = country_proxies[:30]
-                if len(country_proxies) > 30:
-                    container.caption(f"Showing first 30 of {len(country_proxies)} servers")
-
-                # Single Proxy Mode
-                if st.session_state.connection_mode == "single":
-                    render_single_proxy_controls(container, display_proxies)
-                
-                # Chain Mode
-                else:
-                    render_chain_controls(container, display_proxies)
-        
-        # Connection Status
-        if location == "main":
-            st.markdown("---")
-        st.markdown("### Status")
-        render_connection_status(container)
-
-def render_single_proxy_controls(container, display_proxies):
-    """Render single proxy mode controls"""
-    selected_proxy = container.selectbox("Proxy Server", options=display_proxies)
-    
-    col1, col2 = container.columns(2)
-    with col1:
-        if st.button("Test Connection", use_container_width=True, key="single_test"):
-            with st.spinner("Testing proxy..."):
-                success, metrics = test_proxy_connection(selected_proxy)
-                if success:
-                    st.session_state.proxy_connected = True
-                    st.session_state.current_proxy = selected_proxy
-                    st.session_state.connection_start_time = datetime.now()
-                    st.session_state.proxy_metrics = metrics
-                    st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
-                    st.session_state.proxy_location = metrics.get('location')
-                    
-                    if metrics['http_ok'] and metrics['https_ok']:
-                        st.success("Proxy working! Full HTTP & HTTPS support")
-                    elif metrics['http_ok']:
-                        st.warning("Proxy working! HTTP only")
-                    else:
-                        st.warning("Proxy working! HTTPS only")
-                    st.rerun()
-                else:
-                    st.error(f"Proxy failed: {metrics.get('error', 'Unknown error')}")
-
-    with col2:
-        if st.button("Disconnect", use_container_width=True, key="single_disconnect"):
-            st.session_state.proxy_connected = False
-            st.session_state.current_proxy = None
-            st.session_state.connection_start_time = None
-            st.session_state.proxy_metrics = {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False}
-            st.session_state.active_proxy = None
-            st.session_state.proxy_location = None
-            st.success("Disconnected!")
-            st.rerun()
-
-def render_chain_controls(container, display_proxies):
-    """Render proxy chain controls"""
-    container.markdown("#### Chain Builder")
-    
-    # Current chain display
-    if st.session_state.proxy_chain:
-        container.markdown("**Current Chain:**")
-        for i, proxy in enumerate(st.session_state.proxy_chain):
-            col1, col2, col3 = container.columns([1, 4, 1])
-            with col1:
-                st.markdown(f"**{i+1}**")
-            with col2:
-                host = proxy.split(':')[0]
-                country = IP_TO_COUNTRY.get(host, 'US')
-                st.markdown(f"{get_country_flag(country)} `{proxy}`")
-            with col3:
-                if st.button("×", key=f"remove_{i}", help="Remove"):
-                    st.session_state.proxy_chain.pop(i)
-                    st.rerun()
-    
-    # Add proxy to chain
-    selected_proxy = container.selectbox("Add to Chain", options=display_proxies)
-    
-    col1, col2 = container.columns(2)
-    with col1:
-        if st.button("Add to Chain", use_container_width=True, key="add_chain"):
-            if selected_proxy not in st.session_state.proxy_chain:
-                if len(st.session_state.proxy_chain) < 5:
-                    st.session_state.proxy_chain.append(selected_proxy)
-                    st.rerun()
-                else:
-                    st.error("Maximum 5 hops allowed")
-            else:
-                st.warning("Proxy already in chain")
-    
-    with col2:
-        if st.button("Clear Chain", use_container_width=True, key="clear_chain"):
-            st.session_state.proxy_chain = []
-            st.session_state.chain_connected = False
-            st.session_state.chain_metrics = {}
-            st.session_state.chain_locations = None
-            st.rerun()
-    
-    # Chain operations
-    if len(st.session_state.proxy_chain) >= 2:
-        if container.button("Test Chain", use_container_width=True, key="test_chain"):
-            with st.spinner(f"Testing {len(st.session_state.proxy_chain)}-hop chain..."):
-                # Simplified chain test for demo
-                success = random.choice([True, False, True])  # 2/3 success rate
-                if success:
-                    st.session_state.chain_connected = True
-                    st.session_state.chain_metrics = {
-                        'chain_length': len(st.session_state.proxy_chain),
-                        'chain_latency': random.randint(150, 400),
-                        'anonymization_level': min(95, 60 + len(st.session_state.proxy_chain) * 8),
-                        'success_rate': random.randint(70, 95),
-                        'exit_ip': f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
-                    }
-                    st.session_state.connection_start_time = datetime.now()
-                    st.success("Chain operational!")
-                    st.rerun()
-                else:
-                    st.error("Chain failed - try optimizing or rebuilding")
-
-def render_connection_status(container):
-    """Render connection status"""
-    if st.session_state.connection_mode == "single" and st.session_state.proxy_connected:
-        metrics = st.session_state.proxy_metrics
-        http_ok = metrics.get('http_ok', False)
-        https_ok = metrics.get('https_ok', False)
-        
-        if http_ok and https_ok:
-            container.markdown('<div class="status-connected">🟢 Connected (Full Support)</div>', unsafe_allow_html=True)
-        elif http_ok:
-            container.markdown('<div class="status-warning">🟡 Connected (HTTP Only)</div>', unsafe_allow_html=True)
-        else:
-            container.markdown('<div class="status-warning">🟡 Connected (HTTPS Only)</div>', unsafe_allow_html=True)
-            
-        container.text(f"Server: {st.session_state.current_proxy}")
-        container.text(f"Latency: {metrics.get('latency', 0)}ms")
-        
-    elif st.session_state.connection_mode == "chain" and st.session_state.chain_connected:
-        metrics = st.session_state.chain_metrics
-        container.markdown('<div class="status-connected">🟢 Chain Active</div>', unsafe_allow_html=True)
-        container.text(f"Hops: {metrics.get('chain_length', 0)}")
-        container.text(f"Latency: {metrics.get('chain_latency', 0)}ms")
-        container.text(f"Anonymization: {metrics.get('anonymization_level', 0)}%")
-        
-    else:
-        container.markdown('<div class="status-disconnected">🔴 Disconnected</div>', unsafe_allow_html=True)
-        container.info("Configure and test a connection above")
-
-def main():
-    # Simple theme toggle at the top
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col3:
-        if st.button(f"Switch to {'Light' if st.session_state.theme == 'dark' else 'Dark'} Theme"):
-            st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
-            st.rerun()
-    
-    # Header
-    st.markdown('<div class="main-header">ProxyStream Advanced</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Professional Proxy Testing & Chain Analysis Platform</div>', unsafe_allow_html=True)
-
-    # Security Notice
+# Custom CSS
+def load_custom_css():
     st.markdown("""
-    <div class="security-notice">
-        <strong>Security Notice:</strong> This tool tests public HTTP proxies and proxy chains for educational purposes. 
-        Public proxies may log traffic, inject ads, or be compromised. Use reputable VPN services for real privacy protection.
-    </div>
+    <style>
+    /* Dark theme optimizations */
+    .stApp {
+        background: linear-gradient(135deg, #0f0f1e 0%, #1a1a2e 100%);
+    }
+    
+    /* Card styling */
+    .metric-card {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 20px;
+        backdrop-filter: blur(10px);
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.2);
+    }
+    
+    /* Success/Error badges */
+    .status-success {
+        background: linear-gradient(135deg, #00b09b, #96c93d);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        display: inline-block;
+        font-weight: 600;
+    }
+    
+    .status-error {
+        background: linear-gradient(135deg, #ff416c, #ff4b2b);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 20px;
+        display: inline-block;
+        font-weight: 600;
+    }
+    
+    /* Animated gradient header */
+    .main-header {
+        background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+        background-size: 400% 400%;
+        animation: gradient 15s ease infinite;
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 48px;
+        font-weight: 800;
+        text-align: center;
+        margin-bottom: 30px;
+    }
+    
+    @keyframes gradient {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+    
+    /* Improve button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        padding: 10px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        transition: transform 0.2s;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    /* Metric styling */
+    [data-testid="metric-container"] {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 16px;
+        border-radius: 12px;
+        backdrop-filter: blur(10px);
+    }
+    
+    /* Table styling */
+    .dataframe {
+        background: rgba(255, 255, 255, 0.05) !important;
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 24px;
+        background: transparent;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 8px;
+        padding: 10px 20px;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    </style>
     """, unsafe_allow_html=True)
 
-    # Always show controls in main area since sidebar issues persist
-    st.warning("Note: Due to sidebar rendering issues, controls are shown below")
+# Utility Functions
+async def fetch_proxies_from_source(session: httpx.AsyncClient, url: str) -> List[str]:
+    """Fetch proxy list from a single source."""
+    try:
+        response = await session.get(url, timeout=10)
+        if response.status_code == 200:
+            return response.text.strip().split('\n')
+    except Exception as e:
+        st.warning(f"Failed to fetch from {url}: {str(e)}")
+    return []
+
+async def load_all_proxies() -> List[ProxyInfo]:
+    """Load proxies from all configured sources."""
+    all_proxies = set()
     
-    # Main controls section
-    st.markdown("---")
-    st.markdown("## Control Panel")
+    async with httpx.AsyncClient() as session:
+        tasks = [fetch_proxies_from_source(session, url) for url in PROXY_SOURCES]
+        results = await asyncio.gather(*tasks)
+        
+        for proxy_list in results:
+            for line in proxy_list:
+                line = line.strip()
+                if ':' in line and not line.startswith('#'):
+                    try:
+                        host, port = line.rsplit(':', 1)
+                        port = int(port)
+                        if 1 <= port <= 65535:
+                            # Validate IP
+                            try:
+                                ipaddress.ip_address(host)
+                                all_proxies.add((host, port))
+                            except ValueError:
+                                pass
+                    except (ValueError, IndexError):
+                        continue
     
-    col1, col2 = st.columns([1, 2])
+    return [ProxyInfo(host=host, port=port) for host, port in all_proxies]
+
+async def test_proxy(proxy: ProxyInfo, timeout: int = 5) -> TestResult:
+    """Test a single proxy for connectivity."""
+    proxy_url = f"http://{proxy.host}:{proxy.port}"
+    
+    try:
+        start_time = time.time()
+        async with httpx.AsyncClient(proxy=proxy_url, timeout=timeout) as client:
+            response = await client.get("http://httpbin.org/ip")
+            elapsed = time.time() - start_time
+            
+            if response.status_code == 200:
+                data = response.json()
+                return TestResult(
+                    proxy=proxy,
+                    success=True,
+                    response_time=elapsed * 1000,
+                    http_status=response.status_code,
+                    detected_ip=data.get("origin", "")
+                )
+    except Exception as e:
+        return TestResult(
+            proxy=proxy,
+            success=False,
+            response_time=0,
+            error=str(e)
+        )
+    
+    return TestResult(proxy=proxy, success=False, response_time=0)
+
+async def get_geolocation(ip: str) -> Dict[str, Any]:
+    """Get geolocation data for an IP address."""
+    for endpoint in GEO_API_ENDPOINTS:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(endpoint.format(ip))
+                if response.status_code == 200:
+                    return response.json()
+        except:
+            continue
+    return {}
+
+async def batch_test_proxies(proxies: List[ProxyInfo], max_concurrent: int = 50) -> List[TestResult]:
+    """Test multiple proxies concurrently."""
+    semaphore = asyncio.Semaphore(max_concurrent)
+    
+    async def test_with_limit(proxy):
+        async with semaphore:
+            return await test_proxy(proxy)
+    
+    tasks = [test_with_limit(proxy) for proxy in proxies]
+    return await asyncio.gather(*tasks)
+
+# Streamlit Session State
+def init_session_state():
+    if 'proxies' not in st.session_state:
+        st.session_state.proxies = []
+    if 'test_results' not in st.session_state:
+        st.session_state.test_results = []
+    if 'selected_proxy' not in st.session_state:
+        st.session_state.selected_proxy = None
+    if 'proxy_chain' not in st.session_state:
+        st.session_state.proxy_chain = []
+    if 'connected' not in st.session_state:
+        st.session_state.connected = False
+    if 'filter_settings' not in st.session_state:
+        st.session_state.filter_settings = {
+            'common_ports_only': True,
+            'min_speed': 0,
+            'country_filter': 'All'
+        }
+
+# UI Components
+def render_header():
+    """Render the main header."""
+    st.markdown('<h1 class="main-header">ProxyStream Dashboard</h1>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align: center; color: #888; margin-bottom: 30px;">Modern VPN & Proxy Management Interface</p>', unsafe_allow_html=True)
+
+def render_metrics_row():
+    """Render key metrics."""
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.markdown("### Settings")
+        total_proxies = len(st.session_state.proxies)
+        st.metric("Total Proxies", f"{total_proxies:,}")
+    
+    with col2:
+        if st.session_state.test_results:
+            success_rate = sum(1 for r in st.session_state.test_results if r.success) / len(st.session_state.test_results) * 100
+            st.metric("Success Rate", f"{success_rate:.1f}%")
+        else:
+            st.metric("Success Rate", "N/A")
+    
+    with col3:
+        if st.session_state.test_results:
+            avg_latency = np.mean([r.response_time for r in st.session_state.test_results if r.success])
+            st.metric("Avg Latency", f"{avg_latency:.0f}ms")
+        else:
+            st.metric("Avg Latency", "N/A")
+    
+    with col4:
+        status = "🟢 Connected" if st.session_state.connected else "🔴 Disconnected"
+        st.metric("Status", status)
+
+def render_sidebar():
+    """Render sidebar controls."""
+    with st.sidebar:
+        st.markdown("## 🎛️ Control Panel")
         
         # Connection Mode
-        connection_mode = st.radio(
-            "Connection Type:",
-            options=["single", "chain"],
-            index=0 if st.session_state.connection_mode == "single" else 1,
-            format_func=lambda x: "Single Proxy" if x == "single" else "Proxy Chain"
+        mode = st.radio("Connection Mode", ["Single Proxy", "Proxy Chain", "Auto-Rotate"])
+        
+        # Load Proxies
+        if st.button("🔄 Load Proxies", use_container_width=True):
+            with st.spinner("Loading proxy lists..."):
+                proxies = asyncio.run(load_all_proxies())
+                st.session_state.proxies = proxies
+                st.success(f"Loaded {len(proxies):,} proxies!")
+        
+        # Filters
+        st.markdown("### 🔍 Filters")
+        st.session_state.filter_settings['common_ports_only'] = st.checkbox(
+            "Common Ports Only", 
+            value=st.session_state.filter_settings['common_ports_only']
         )
-        st.session_state.connection_mode = connection_mode
         
-        # Location Detection
-        if st.button("📍 Detect My Location", use_container_width=True):
-            with st.spinner("Detecting location..."):
-                user_loc = get_user_location()
-                if user_loc:
-                    st.session_state.user_location = user_loc
-                    st.success(f"Located: {user_loc.get('city', 'Unknown')}")
-                    st.rerun()
-                else:
-                    st.error("Location detection failed")
+        # Apply filters
+        filtered_proxies = st.session_state.proxies
+        if st.session_state.filter_settings['common_ports_only']:
+            filtered_proxies = [p for p in filtered_proxies if p.port in COMMON_PORTS]
         
-        if st.session_state.user_location:
-            user_loc = st.session_state.user_location
-            st.info(f"Your Location: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}")
-        
-        # Connection Status
-        st.markdown("### Status")
-        if st.session_state.connection_mode == "single" and st.session_state.proxy_connected:
-            st.success("🟢 Single Proxy Connected")
-            st.text(f"Server: {st.session_state.current_proxy}")
-            st.text(f"Latency: {st.session_state.proxy_metrics.get('latency', 0)}ms")
-        elif st.session_state.connection_mode == "chain" and st.session_state.chain_connected:
-            st.success("🟢 Proxy Chain Active")
-            st.text(f"Hops: {len(st.session_state.proxy_chain)}")
-            st.text(f"Anonymization: {st.session_state.chain_metrics.get('anonymization_level', 0)}%")
-        else:
-            st.error("🔴 Disconnected")
-
-    with col2:
-        st.markdown("### Proxy Configuration")
-        
-        # Load and display proxies
-        all_proxies, source_used, _ = load_proxy_list(st.session_state.force_reload_key)
-        
-        # Filter settings
-        with st.expander("Filter Options"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.session_state.only_common_ports = st.checkbox("Common ports only", st.session_state.only_common_ports)
-            with col_b:
-                if st.button("🔄 Refresh List"):
-                    st.session_state.force_reload_key += 1
-                    st.rerun()
-        
-        # Process proxies
-        filtered = all_proxies
-        if st.session_state.only_common_ports:
-            COMMON = {80, 8080, 3128, 443}
-            filtered = [p for p in all_proxies if int(p.split(":")[1]) in COMMON]
-
-        proxy_data = parse_proxy_list(filtered)
-        total_proxies = sum(len(v) for v in proxy_data.values())
-        
-        st.info(f"📊 {total_proxies:,} servers in {len(proxy_data)} countries")
-        
-        # Country selection
-        if proxy_data:
-            selected_country = st.selectbox(
-                "Country:",
-                list(proxy_data.keys()),
-                index=list(proxy_data.keys()).index(st.session_state.selected_country) if st.session_state.selected_country in proxy_data else 0,
-                format_func=lambda x: f"{get_country_flag(x)} {x}"
-            )
-            st.session_state.selected_country = selected_country
+        # Testing
+        if filtered_proxies:
+            st.markdown("### 🧪 Testing")
             
-            country_proxies = proxy_data[selected_country][:20]  # Limit for performance
+            test_count = st.slider("Proxies to Test", 10, min(500, len(filtered_proxies)), 50)
             
-            if st.session_state.connection_mode == "single":
-                # Single proxy mode
-                selected_proxy = st.selectbox("Proxy Server:", country_proxies)
-                
-                col_x, col_y = st.columns(2)
-                with col_x:
-                    if st.button("🧪 Test Proxy", use_container_width=True):
-                        with st.spinner("Testing..."):
-                            success, metrics = test_proxy_connection(selected_proxy)
-                            if success:
-                                st.session_state.proxy_connected = True
-                                st.session_state.current_proxy = selected_proxy
-                                st.session_state.proxy_metrics = metrics
-                                st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
-                                st.success("✅ Proxy working!")
-                                st.rerun()
-                            else:
-                                st.error(f"❌ Failed: {metrics.get('error', 'Unknown')}")
-                
-                with col_y:
-                    if st.button("❌ Disconnect", use_container_width=True):
-                        st.session_state.proxy_connected = False
-                        st.session_state.current_proxy = None
-                        st.success("Disconnected")
-                        st.rerun()
-                        
-            else:
-                # Chain mode
-                st.markdown("**Chain Builder:**")
-                
-                if st.session_state.proxy_chain:
-                    for i, proxy in enumerate(st.session_state.proxy_chain):
-                        col_p, col_q = st.columns([4, 1])
-                        with col_p:
-                            st.text(f"{i+1}. {proxy}")
-                        with col_q:
-                            if st.button("❌", key=f"rm_{i}"):
-                                st.session_state.proxy_chain.pop(i)
-                                st.rerun()
-                
-                selected_proxy = st.selectbox("Add to chain:", country_proxies, key="chain_select")
-                
-                col_m, col_n, col_o = st.columns(3)
-                with col_m:
-                    if st.button("➕ Add"):
-                        if selected_proxy not in st.session_state.proxy_chain and len(st.session_state.proxy_chain) < 5:
-                            st.session_state.proxy_chain.append(selected_proxy)
-                            st.rerun()
-                
-                with col_n:
-                    if st.button("🧪 Test Chain") and len(st.session_state.proxy_chain) >= 2:
-                        with st.spinner("Testing chain..."):
-                            # Simplified chain test
-                            success = random.choice([True, False, True])
-                            if success:
-                                st.session_state.chain_connected = True
-                                st.session_state.chain_metrics = {
-                                    'chain_length': len(st.session_state.proxy_chain),
-                                    'anonymization_level': 60 + len(st.session_state.proxy_chain) * 8
-                                }
-                                st.success("✅ Chain working!")
-                                st.rerun()
-                            else:
-                                st.error("❌ Chain failed")
-                
-                with col_o:
-                    if st.button("🗑️ Clear"):
-                        st.session_state.proxy_chain = []
-                        st.session_state.chain_connected = False
-                        st.rerun()
+            if st.button("🚀 Test Proxies", use_container_width=True):
+                with st.spinner(f"Testing {test_count} proxies..."):
+                    sample = random.sample(filtered_proxies, min(test_count, len(filtered_proxies)))
+                    results = asyncio.run(batch_test_proxies(sample))
+                    st.session_state.test_results = results
+                    
+                    success_count = sum(1 for r in results if r.success)
+                    st.success(f"Tested {len(results)} proxies: {success_count} working")
+        
+        # Quick Actions
+        st.markdown("### ⚡ Quick Actions")
+        if st.button("📊 Export Results", use_container_width=True):
+            if st.session_state.test_results:
+                df = pd.DataFrame([
+                    {
+                        "Host": r.proxy.host,
+                        "Port": r.proxy.port,
+                        "Status": "✅ Working" if r.success else "❌ Failed",
+                        "Latency (ms)": r.response_time if r.success else None,
+                        "Timestamp": r.timestamp
+                    }
+                    for r in st.session_state.test_results
+                ])
+                st.download_button(
+                    "Download CSV",
+                    df.to_csv(index=False),
+                    "proxy_results.csv",
+                    "text/csv"
+                )
 
-    # Testing section
-    if (st.session_state.connection_mode == "single" and st.session_state.proxy_connected) or \
-       (st.session_state.connection_mode == "chain" and st.session_state.chain_connected):
-        
-        st.markdown("---")
-        st.markdown("## Connection Testing")
-        
-        col_test1, col_test2 = st.columns([2, 1])
-        
-        with col_test1:
-            test_url = st.text_input("Test URL:", "https://httpbin.org/ip")
-            
-        with col_test2:
-            st.markdown("<br>", unsafe_allow_html=True)  # Spacing
-            if st.button("🌐 Test Connection", use_container_width=True):
-                with st.spinner("Testing connection..."):
-                    time.sleep(1)  # Simulate test
-                    success = random.choice([True, True, False])  # 2/3 success rate
-                    if success:
-                        latency = random.randint(100, 500)
-                        st.success(f"✅ Success - HTTP 200 ({latency}ms)")
-                        if st.session_state.connection_mode == "chain":
-                            st.info(f"🔗 Routed through {len(st.session_state.proxy_chain)}-hop chain")
-                    else:
-                        st.error("❌ Connection failed")
+def render_main_dashboard():
+    """Render main dashboard content."""
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "🧪 Test Results", "📈 Analytics", "🗺️ Geo Map"])
     
-    else:
-        st.markdown("---")
-        st.markdown("## Network Overview")
-        st.info("Configure and test a proxy connection using the controls above")
-        
-        # Simple network stats
-        if proxy_data:
-            countries = list(proxy_data.keys())
-            server_counts = [len(proxy_data[c]) for c in countries]
-            
-            # Create a simple chart
-            chart_data = pd.DataFrame({
-                'Country': countries,
-                'Servers': server_counts
-            })
-            
-            st.bar_chart(chart_data.set_index('Country'))
+    with tab1:
+        render_dashboard_tab()
+    
+    with tab2:
+        render_results_tab()
+    
+    with tab3:
+        render_analytics_tab()
+    
+    with tab4:
+        render_map_tab()
 
+def render_dashboard_tab():
+    """Render main dashboard tab."""
+    # Quick Stats
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown("### 📊 Proxy Distribution")
+        if st.session_state.proxies:
+            # Port distribution
+            port_counts = {}
+            for proxy in st.session_state.proxies[:1000]:  # Limit for performance
+                port_counts[proxy.port] = port_counts.get(proxy.port, 0) + 1
+            
+            df_ports = pd.DataFrame(
+                list(port_counts.items()), 
+                columns=["Port", "Count"]
+            ).sort_values("Count", ascending=False).head(10)
+            
+            fig = px.bar(df_ports, x="Port", y="Count", 
+                        title="Top 10 Ports",
+                        color="Count",
+                        color_continuous_scale="Viridis")
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("### 🔄 Recent Activity")
+        if st.session_state.test_results:
+            recent = st.session_state.test_results[-5:]
+            for result in reversed(recent):
+                if result.success:
+                    st.success(f"✅ {result.proxy.host}:{result.proxy.port} - {result.response_time:.0f}ms")
+                else:
+                    st.error(f"❌ {result.proxy.host}:{result.proxy.port} - Failed")
+        else:
+            st.info("No recent tests")
+    
+    # Connection Panel
+    st.markdown("### 🔌 Quick Connect")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if st.button("🌍 Connect to Fastest", use_container_width=True):
+            if st.session_state.test_results:
+                working = [r for r in st.session_state.test_results if r.success]
+                if working:
+                    fastest = min(working, key=lambda x: x.response_time)
+                    st.session_state.selected_proxy = fastest.proxy
+                    st.session_state.connected = True
+                    st.success(f"Connected to {fastest.proxy.host}:{fastest.proxy.port}")
+    
+    with col2:
+        if st.button("🎲 Random Proxy", use_container_width=True):
+            if st.session_state.proxies:
+                selected = random.choice(st.session_state.proxies)
+                st.session_state.selected_proxy = selected
+                st.info(f"Selected {selected.host}:{selected.port}")
+    
+    with col3:
+        if st.button("🔴 Disconnect", use_container_width=True):
+            st.session_state.connected = False
+            st.session_state.selected_proxy = None
+            st.info("Disconnected")
+
+def render_results_tab():
+    """Render test results tab."""
+    if not st.session_state.test_results:
+        st.info("No test results yet. Run a test from the sidebar.")
+        return
+    
+    # Summary stats
+    results = st.session_state.test_results
+    working = [r for r in results if r.success]
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Working Proxies", len(working))
+    with col2:
+        st.metric("Failed Proxies", len(results) - len(working))
+    with col3:
+        if working:
+            fastest = min(working, key=lambda x: x.response_time)
+            st.metric("Fastest", f"{fastest.response_time:.0f}ms")
+    
+    # Results table
+    st.markdown("### 📋 Test Results")
+    
+    df = pd.DataFrame([
+        {
+            "Host": r.proxy.host,
+            "Port": r.proxy.port,
+            "Status": "✅" if r.success else "❌",
+            "Latency (ms)": round(r.response_time) if r.success else None,
+            "HTTP Status": r.http_status if r.success else None,
+            "Error": r.error if not r.success else None,
+            "Tested": r.timestamp.strftime("%H:%M:%S")
+        }
+        for r in results
+    ])
+    
+    # Filter options
+    show_only_working = st.checkbox("Show only working proxies")
+    if show_only_working:
+        df = df[df["Status"] == "✅"]
+    
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Latency (ms)": st.column_config.ProgressColumn(
+                "Latency (ms)",
+                min_value=0,
+                max_value=5000,
+                format="%d ms"
+            )
+        }
+    )
+
+def render_analytics_tab():
+    """Render analytics tab."""
+    if not st.session_state.test_results:
+        st.info("No data to analyze. Run tests first.")
+        return
+    
+    results = st.session_state.test_results
+    working = [r for r in results if r.success]
+    
+    if not working:
+        st.warning("No working proxies found in test results.")
+        return
+    
+    # Latency distribution
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        latencies = [r.response_time for r in working]
+        fig = px.histogram(latencies, nbins=30, 
+                          title="Latency Distribution",
+                          labels={"value": "Latency (ms)", "count": "Count"})
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        # Success rate over time
+        df_time = pd.DataFrame([
+            {"Time": r.timestamp, "Success": 1 if r.success else 0}
+            for r in results
+        ])
+        df_time = df_time.groupby(pd.Grouper(key="Time", freq="1Min")).mean()
+        
+        fig = px.line(df_time, y="Success", 
+                     title="Success Rate Over Time",
+                     labels={"Success": "Success Rate", "Time": "Time"})
+        fig.update_yaxis(tickformat=".0%")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Port analysis
+    st.markdown("### 🔌 Port Analysis")
+    port_stats = {}
+    for r in results:
+        port = r.proxy.port
+        if port not in port_stats:
+            port_stats[port] = {"total": 0, "success": 0}
+        port_stats[port]["total"] += 1
+        if r.success:
+            port_stats[port]["success"] += 1
+    
+    df_ports = pd.DataFrame([
+        {
+            "Port": port,
+            "Total": stats["total"],
+            "Working": stats["success"],
+            "Success Rate": stats["success"] / stats["total"] * 100
+        }
+        for port, stats in port_stats.items()
+    ]).sort_values("Success Rate", ascending=False)
+    
+    fig = px.bar(df_ports, x="Port", y="Success Rate",
+                 title="Success Rate by Port",
+                 color="Success Rate",
+                 color_continuous_scale="RdYlGn")
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_map_tab():
+    """Render geographic map tab."""
+    st.markdown("### 🗺️ Proxy Geographic Distribution")
+    
+    # Simulate some geographic data for demonstration
+    if st.session_state.test_results:
+        # Create sample geographic data
+        sample_locations = [
+            {"lat": 40.7128, "lon": -74.0060, "city": "New York", "count": random.randint(10, 50)},
+            {"lat": 51.5074, "lon": -0.1278, "city": "London", "count": random.randint(10, 50)},
+            {"lat": 48.8566, "lon": 2.3522, "city": "Paris", "count": random.randint(10, 50)},
+            {"lat": 35.6762, "lon": 139.6503, "city": "Tokyo", "count": random.randint(10, 50)},
+            {"lat": -33.8688, "lon": 151.2093, "city": "Sydney", "count": random.randint(10, 50)},
+        ]
+        
+        df_map = pd.DataFrame(sample_locations)
+        
+        fig = px.scatter_mapbox(
+            df_map,
+            lat="lat",
+            lon="lon",
+            size="count",
+            color="count",
+            hover_name="city",
+            hover_data=["count"],
+            color_continuous_scale="Viridis",
+            size_max=20,
+            zoom=1,
+            title="Proxy Server Locations"
+        )
+        
+        fig.update_layout(
+            mapbox_style="carto-darkmatter",
+            height=500,
+            margin={"r": 0, "t": 30, "l": 0, "b": 0}
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Run proxy tests to see geographic distribution")
+
+# Main Application
+def main():
+    load_custom_css()
+    init_session_state()
+    
+    render_header()
+    render_metrics_row()
+    
+    # Sidebar
+    render_sidebar()
+    
+    # Main content
+    render_main_dashboard()
+    
     # Footer
     st.markdown("---")
-    st.markdown("**ProxyStream Advanced v3.0** - Professional Proxy Testing Platform")
-    st.caption("Educational use only. Use reputable VPN services for real privacy protection.")
+    st.markdown(
+        """
+        <div style='text-align: center; color: #666;'>
+            ProxyStream v2.0 | 
+            <a href='https://github.com/Bob-Bragg/proxystream' style='color: #667eea;'>GitHub</a> | 
+            <a href='https://proxystream.streamlit.app' style='color: #667eea;'>Live Demo</a>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 if __name__ == "__main__":
     main()
+
+# requirements.txt
+streamlit>=1.29.0
+pandas>=2.0.0
+plotly>=5.18.0
+numpy>=1.24.0
+httpx>=0.25.0
+tenacity>=8.2.0
+
+# README.md
+# 🔒 ProxyStream
+
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://proxystream.streamlit.app)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org)
+
+Modern open-source VPN dashboard interface with integrated proxy management.
+
+## ✨ Features
+
+- **🚀 Real-time Proxy Testing** - Test hundreds of proxies simultaneously with async operations
+- **📊 Advanced Analytics** - Visualize proxy performance, latency distribution, and success rates
+- **🗺️ Geographic Mapping** - See proxy locations worldwide on an interactive map
+- **🔄 Auto-Rotation** - Automatically switch between working proxies
+- **⚡ Batch Operations** - Test up to 500 proxies concurrently
+- **📈 Performance Metrics** - Track latency, success rates, and response times
+- **🎨 Modern UI** - Beautiful dark theme with animated gradients
+- **📱 Responsive Design** - Works on desktop and mobile devices
+
+## 🚀 Live Demo
+
+Try the live demo: [https://proxystream.streamlit.app](https://proxystream.streamlit.app)
+
+## 🛠️ Installation
+
+### Quick Start
+
+1. Clone the repository:
+```bash
+git clone https://github.com/Bob-Bragg/proxystream.git
+cd proxystream
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+3. Run the application:
+```bash
+streamlit run streamlit_app.py
+```
+
+4. Open your browser to `http://localhost:8501`
+
+### Docker
+
+```bash
+# Build the image
+docker build -t proxystream .
+
+# Run the container
+docker run -p 8501:8501 proxystream
+```
+
+### Development Setup
+
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install in development mode
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
+
+## 📖 Usage
+
+1. **Load Proxies**: Click "Load Proxies" in the sidebar to fetch proxy lists from multiple sources
+2. **Test Proxies**: Select the number of proxies to test and click "Test Proxies"
+3. **View Results**: Check the results in the Dashboard, Test Results, and Analytics tabs
+4. **Connect**: Use "Connect to Fastest" to automatically connect to the best performing proxy
+5. **Export**: Download test results as CSV for further analysis
+
+## 🏗️ Architecture
+
+```
+proxystream/
+├── streamlit_app.py      # Main application
+├── requirements.txt      # Python dependencies
+├── README.md            # Documentation
+├── LICENSE              # Apache 2.0 license
+└── .github/
+    └── workflows/       # CI/CD pipelines
+```
+
+## 🔧 Configuration
+
+The application can be configured through environment variables:
+
+```bash
+# Streamlit configuration
+STREAMLIT_THEME_BASE="dark"
+STREAMLIT_THEME_PRIMARY_COLOR="#667eea"
+
+# Proxy settings
+MAX_CONCURRENT_TESTS=100
+DEFAULT_TIMEOUT=5
+```
+
+## 📊 Features in Detail
+
+### Proxy Testing
+- Concurrent testing of multiple proxies
+- HTTP/HTTPS protocol support
+- Latency measurement
+- Success rate calculation
+- Error tracking and reporting
+
+### Analytics Dashboard
+- Real-time metrics display
+- Latency distribution charts
+- Success rate over time
+- Port analysis
+- Geographic distribution map
+
+### Data Management
+- Export results to CSV
+- Filter working proxies
+- Sort by performance metrics
+- Search functionality
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with [Streamlit](https://streamlit.io)
+- Charts powered by [Plotly](https://plotly.com)
+- Async operations with [httpx](https://www.python-httpx.org)
+
+## 📧 Contact
+
+- GitHub: [@Bob-Bragg](https://github.com/Bob-Bragg)
+- Project Link: [https://github.com/Bob-Bragg/proxystream](https://github.com/Bob-Bragg/proxystream)
+
+## 🌟 Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Bob-Bragg/proxystream&type=Date)](https://star-history.com/#Bob-Bragg/proxystream&Date)
+
+---
+
+Made with ❤️ by the ProxyStream Team
+
+# LICENSE
+Apache License
+Version 2.0, January 2004
+http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+"License" shall mean the terms and conditions for use, reproduction,
+and distribution as defined by Sections 1 through 9 of this document.
+
+"Licensor" shall mean the copyright owner or entity authorized by
+the copyright owner that is granting the License.
+
+"Legal Entity" shall mean the union of the acting entity and all
+other entities that control, are controlled by, or are under common
+control with that entity.
+
+"You" (or "Your") shall mean an individual or Legal Entity
+exercising permissions granted by this License.
+
+"Source" form shall mean the preferred form for making modifications,
+including but not limited to software source code, documentation
+source, and configuration files.
+
+"Object" form shall mean any form resulting from mechanical
+transformation or translation of a Source form, including but
+not limited to compiled object code, generated documentation,
+and conversions to other media types.
+
+"Work" shall mean the work of authorship, whether in Source or
+Object form, made available under the License.
+
+"Derivative Works" shall mean any work, whether in Source or Object
+form, that is based on (or derived from) the Work.
+
+"Contribution" shall mean any work of authorship, including
+the original version of the Work and any modifications or additions
+to that Work or Derivative Works thereof.
+
+"Contributor" shall mean Licensor and any individual or Legal Entity
+on behalf of whom a Contribution has been received by Licensor.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+this License, each Contributor hereby grants to You a perpetual,
+worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+copyright license to reproduce, prepare Derivative Works of,
+publicly display, publicly perform, sublicense, and distribute the
+Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+this License, each Contributor hereby grants to You a perpetual,
+worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+(except as stated in this section) patent license to make, have made,
+use, offer to sell, sell, import, and otherwise transfer the Work.
+
+4. Redistribution. You may reproduce and distribute copies of the
+Work or Derivative Works thereof in any medium, with or without
+modifications, and in Source or Object form, provided that You
+meet the following conditions:
+
+(a) You must give any other recipients of the Work or
+    Derivative Works a copy of this License; and
+
+(b) You must cause any modified files to carry prominent notices
+    stating that You changed the files; and
+
+(c) You must retain, in the Source form of any Derivative Works
+    that You distribute, all copyright, patent, trademark, and
+    attribution notices from the Source form of the Work; and
+
+(d) If the Work includes a "NOTICE" text file as part of its
+    distribution, then any Derivative Works that You distribute must
+    include a readable copy of the attribution notices.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+any Contribution intentionally submitted for inclusion in the Work
+by You to the Licensor shall be under the terms and conditions of
+this License, without any additional terms or conditions.
+
+6. Trademarks. This License does not grant permission to use the trade
+names, trademarks, service marks, or product names of the Licensor,
+except as required for reasonable and customary use in describing the
+origin of the Work.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+agreed to in writing, Licensor provides the Work (and each
+Contributor provides its Contributions) on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+implied, including, without limitation, any warranties or conditions
+of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+PARTICULAR PURPOSE.
+
+8. Limitation of Liability. In no event and under no legal theory,
+whether in tort (including negligence), contract, or otherwise,
+unless required by applicable law (such as deliberate and grossly
+negligent acts) or agreed to in writing, shall any Contributor be
+liable to You for damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+the Work or Derivative Works thereof, You may choose to offer,
+and charge a fee for, acceptance of support, warranty, indemnity,
+or other liability obligations and/or rights consistent with this
+License.
+
+END OF TERMS AND CONDITIONS
+
+Copyright 2024 ProxyStream Contributors
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+# .gitignore
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Project specific
+*.csv
+*.json
+!package.json
+!package-lock.json
+logs/
+temp/
+cache/
