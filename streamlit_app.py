@@ -32,6 +32,7 @@ st.set_page_config(
 
 # Constants
 PROXY_SOURCES = [
+    "https://raw.githubusercontent.com/arandomguyhere/Proxy-Hound/refs/heads/main/docs/proxy_hound_results.txt",
     "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
     "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
