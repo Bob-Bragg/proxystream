@@ -1,16 +1,19 @@
 """
 ProxyStream Advanced - Professional Proxy Testing & Chain Analysis Platform
-Educational tool for testing public HTTP proxies and proxy chains
+With persistence, geolocation, and validation features
 """
 
 import asyncio
 import time
 import random
+import json
+import sqlite3
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime
-from dataclasses import dataclass
+from datetime import datetime, timedelta
+from dataclasses import dataclass, asdict
 import ipaddress
 import re
+from pathlib import Path
 
 import streamlit as st
 import pandas as pd
@@ -29,13 +32,100 @@ st.set_page_config(
 
 # Constants
 PROXY_SOURCES = [
-    "https://raw.githubusercontent.com/arandomguyhere/Proxy-Hound/refs/heads/main/docs/proxy_hound_results.txt",
     "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
     "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
     "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
 ]
 
+GEO_APIS = [
+    "https://ipapi.co/{}/json/",
+    "http://ip-api.com/json/{}",
+    "https://ipwhois.app/json/{}"
+]
+
 COMMON_PORTS = {80, 8080, 3128, 443, 1080, 8888}
+DB_PATH = "proxystream.db"
+
+# Database Setup
+def init_database():
+    """Initialize SQLite database for persistence."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Good proxies table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS good_proxies (
+            host TEXT,
+            port INTEGER,
+            latency REAL,
+            last_tested TIMESTAMP,
+            success_rate REAL,
+            country TEXT,
+            city TEXT,
+            lat REAL,
+            lon REAL,
+            PRIMARY KEY (host, port)
+        )
+    """)
+    
+    # Proxy chains table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS proxy_chains (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chain_json TEXT,
+            total_latency REAL,
+            created_at TIMESTAMP,
+            success_count INTEGER DEFAULT 0
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+
+def save_good_proxy(proxy_data):
+    """Save working proxy to database."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO good_proxies 
+        (host, port, latency, last_tested, success_rate, country, city, lat, lon)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        proxy_data['host'], proxy_data['port'], proxy_data['latency'],
+        datetime.now(), proxy_data.get('success_rate', 100),
+        proxy_data.get('country'), proxy_data.get('city'),
+        proxy_data.get('lat'), proxy_data.get('lon')
+    ))
+    conn.commit()
+    conn.close()
+
+def load_good_proxies(limit=100):
+    """Load known good proxies from database."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT * FROM good_proxies 
+        WHERE last_tested > datetime('now', '-7 days')
+        ORDER BY latency ASC
+        LIMIT ?
+    """, (limit,))
+    results = cursor.fetchall()
+    conn.close()
+    return results
+
+def save_proxy_chain(chain_data):
+    """Save successful proxy chain."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO proxy_chains (chain_json, total_latency, created_at)
+        VALUES (?, ?, ?)
+    """, (json.dumps(chain_data), chain_data.get('latency', 0), datetime.now()))
+    conn.commit()
+    conn.close()
+
+# Initialize database
+init_database()
 
 # Session State
 if "theme" not in st.session_state:
@@ -44,106 +134,34 @@ if "proxies" not in st.session_state:
     st.session_state.proxies = []
 if "test_results" not in st.session_state:
     st.session_state.test_results = []
+if "good_proxies" not in st.session_state:
+    st.session_state.good_proxies = []
 if "proxy_chain" not in st.session_state:
     st.session_state.proxy_chain = []
-if "connection_mode" not in st.session_state:
-    st.session_state.connection_mode = "single"
-if "connected" not in st.session_state:
-    st.session_state.connected = False
-if "selected_proxy" not in st.session_state:
-    st.session_state.selected_proxy = None
-if "only_common_ports" not in st.session_state:
-    st.session_state.only_common_ports = True
+if "geo_cache" not in st.session_state:
+    st.session_state.geo_cache = {}
 
 # Theme CSS
 def get_theme_css():
     if st.session_state.theme == "light":
         return """
         <style>
-        .stApp { 
-            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%); 
-            color: #1e293b;
-        }
-        .main-header {
-            color: #3b82f6;
-            font-size: 42px;
-            font-weight: 800;
-            text-align: center;
-            margin-bottom: 8px;
-        }
-        .sub-header {
-            color: #64748b;
-            text-align: center;
-            font-size: 18px;
-            margin-bottom: 32px;
-        }
-        [data-testid="metric-container"] {
-            background: white;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.06);
-        }
-        .status-connected {
-            background: #10b981;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 20px;
-            font-weight: 600;
-            text-align: center;
-        }
-        .status-disconnected {
-            background: #ef4444;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 20px;
-            font-weight: 600;
-            text-align: center;
-        }
+        .main-header { color: #3b82f6; font-size: 42px; font-weight: 800; text-align: center; }
+        .sub-header { color: #64748b; text-align: center; font-size: 18px; margin-bottom: 32px; }
+        .status-badge { padding: 8px 16px; border-radius: 20px; display: inline-block; }
+        .status-working { background: #10b981; color: white; }
+        .status-failed { background: #ef4444; color: white; }
         </style>
         """
     else:
         return """
         <style>
-        .stApp { 
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
-            color: #f8fafc;
-        }
-        .main-header {
-            color: #60a5fa;
-            font-size: 42px;
-            font-weight: 800;
-            text-align: center;
-            margin-bottom: 8px;
-        }
-        .sub-header {
-            color: #94a3b8;
-            text-align: center;
-            font-size: 18px;
-            margin-bottom: 32px;
-        }
-        [data-testid="metric-container"] {
-            background: #1e293b;
-            border: 1px solid #475569;
-            border-radius: 12px;
-            padding: 20px;
-        }
-        .status-connected {
-            background: #10b981;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 20px;
-            font-weight: 600;
-            text-align: center;
-        }
-        .status-disconnected {
-            background: #ef4444;
-            color: white;
-            padding: 12px 20px;
-            border-radius: 20px;
-            font-weight: 600;
-            text-align: center;
-        }
+        .stApp { background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); }
+        .main-header { color: #60a5fa; font-size: 42px; font-weight: 800; text-align: center; }
+        .sub-header { color: #94a3b8; text-align: center; font-size: 18px; margin-bottom: 32px; }
+        .status-badge { padding: 8px 16px; border-radius: 20px; display: inline-block; }
+        .status-working { background: #10b981; color: white; }
+        .status-failed { background: #ef4444; color: white; }
         </style>
         """
 
@@ -158,52 +176,39 @@ class ProxyInfo:
     latency: Optional[float] = None
     status: str = "unknown"
     country: Optional[str] = None
-
-@dataclass
-class TestResult:
-    proxy: ProxyInfo
-    success: bool
-    response_time: float
-    error: Optional[str] = None
-    timestamp: datetime = None
-    detected_ip: Optional[str] = None
+    city: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    last_tested: Optional[datetime] = None
 
 # Async Functions
-async def fetch_proxies_from_source(session: httpx.AsyncClient, url: str) -> List[str]:
-    try:
-        response = await session.get(url, timeout=10)
-        if response.status_code == 200:
-            return response.text.strip().split('\n')
-    except:
-        pass
-    return []
-
-async def load_all_proxies() -> List[ProxyInfo]:
-    all_proxies = set()
+async def get_geolocation(ip: str) -> Dict[str, Any]:
+    """Fetch geolocation data for IP."""
+    if ip in st.session_state.geo_cache:
+        return st.session_state.geo_cache[ip]
     
-    async with httpx.AsyncClient() as session:
-        tasks = [fetch_proxies_from_source(session, url) for url in PROXY_SOURCES]
-        results = await asyncio.gather(*tasks)
-        
-        for proxy_list in results:
-            for line in proxy_list:
-                line = line.strip()
-                if ':' in line and not line.startswith('#'):
-                    try:
-                        host, port = line.rsplit(':', 1)
-                        port = int(port)
-                        if 1 <= port <= 65535:
-                            try:
-                                ipaddress.ip_address(host)
-                                all_proxies.add((host, port))
-                            except:
-                                pass
-                    except:
-                        continue
-    
-    return [ProxyInfo(host=host, port=port) for host, port in all_proxies]
+    for api_url in GEO_APIS:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(api_url.format(ip))
+                if response.status_code == 200:
+                    data = response.json()
+                    # Normalize response
+                    geo_data = {
+                        'country': data.get('country') or data.get('country_name'),
+                        'city': data.get('city'),
+                        'lat': data.get('latitude') or data.get('lat'),
+                        'lon': data.get('longitude') or data.get('lon'),
+                        'isp': data.get('isp') or data.get('org')
+                    }
+                    st.session_state.geo_cache[ip] = geo_data
+                    return geo_data
+        except:
+            continue
+    return {}
 
-async def test_proxy(proxy: ProxyInfo, timeout: int = 5) -> TestResult:
+async def validate_proxy(proxy: ProxyInfo, timeout: int = 5) -> Tuple[bool, float, Optional[str]]:
+    """Validate proxy and get response time."""
     proxy_url = f"http://{proxy.host}:{proxy.port}"
     
     try:
@@ -214,41 +219,98 @@ async def test_proxy(proxy: ProxyInfo, timeout: int = 5) -> TestResult:
             
             if response.status_code == 200:
                 data = response.json()
-                return TestResult(
-                    proxy=proxy,
-                    success=True,
-                    response_time=elapsed,
-                    detected_ip=data.get("origin"),
-                    timestamp=datetime.now()
-                )
-    except Exception as e:
-        return TestResult(
-            proxy=proxy,
-            success=False,
-            response_time=0,
-            error=str(e)[:100],
-            timestamp=datetime.now()
-        )
+                return True, elapsed, data.get("origin")
+    except:
+        pass
     
-    return TestResult(proxy=proxy, success=False, response_time=0, timestamp=datetime.now())
+    return False, 0, None
 
-async def batch_test_proxies(proxies: List[ProxyInfo], max_concurrent: int = 50) -> List[TestResult]:
-    semaphore = asyncio.Semaphore(max_concurrent)
+async def fetch_and_validate_proxies(source_url: str) -> List[ProxyInfo]:
+    """Fetch proxies and validate them immediately."""
+    valid_proxies = []
     
-    async def test_with_limit(proxy):
-        async with semaphore:
-            return await test_proxy(proxy)
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.get(source_url)
+            if response.status_code == 200:
+                lines = response.text.strip().split('\n')
+                
+                # Parse proxies
+                proxies_to_test = []
+                for line in lines[:100]:  # Limit initial validation
+                    line = line.strip()
+                    if ':' in line and not line.startswith('#'):
+                        try:
+                            host, port = line.rsplit(':', 1)
+                            port = int(port)
+                            if 1 <= port <= 65535:
+                                ipaddress.ip_address(host)
+                                proxies_to_test.append(ProxyInfo(host=host, port=port))
+                        except:
+                            continue
+                
+                # Validate in parallel
+                if proxies_to_test:
+                    tasks = [validate_proxy(p, timeout=3) for p in proxies_to_test[:20]]
+                    results = await asyncio.gather(*tasks)
+                    
+                    for proxy, (is_valid, latency, detected_ip) in zip(proxies_to_test[:20], results):
+                        if is_valid:
+                            proxy.status = "working"
+                            proxy.latency = latency
+                            
+                            # Get geo data
+                            geo = await get_geolocation(proxy.host)
+                            proxy.country = geo.get('country')
+                            proxy.city = geo.get('city')
+                            proxy.lat = geo.get('lat')
+                            proxy.lon = geo.get('lon')
+                            
+                            valid_proxies.append(proxy)
+                            
+                            # Save to database
+                            save_good_proxy({
+                                'host': proxy.host,
+                                'port': proxy.port,
+                                'latency': latency,
+                                'country': proxy.country,
+                                'city': proxy.city,
+                                'lat': proxy.lat,
+                                'lon': proxy.lon
+                            })
+    except:
+        pass
     
-    tasks = [test_with_limit(proxy) for proxy in proxies]
-    return await asyncio.gather(*tasks)
+    return valid_proxies
+
+async def load_proxies_with_validation():
+    """Load and validate proxies from all sources."""
+    all_valid_proxies = []
+    
+    # Load from database first
+    db_proxies = load_good_proxies()
+    for row in db_proxies:
+        proxy = ProxyInfo(
+            host=row[0], port=row[1], latency=row[2],
+            country=row[5], city=row[6], lat=row[7], lon=row[8],
+            status="working"
+        )
+        all_valid_proxies.append(proxy)
+    
+    # Fetch and validate new proxies
+    tasks = [fetch_and_validate_proxies(url) for url in PROXY_SOURCES]
+    results = await asyncio.gather(*tasks)
+    
+    for proxy_list in results:
+        all_valid_proxies.extend(proxy_list)
+    
+    return all_valid_proxies
 
 # UI Components
 def render_header():
-    # Theme toggle button
     col1, col2, col3 = st.columns([1, 2, 1])
     with col3:
         if st.button(f"Switch to {'Dark' if st.session_state.theme == 'light' else 'Light'} Theme",
-                    key="theme_toggle",
                     type="primary"):
             st.session_state.theme = "dark" if st.session_state.theme == "light" else "light"
             st.rerun()
@@ -256,233 +318,180 @@ def render_header():
     st.markdown('<div class="main-header">ProxyStream Advanced</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Professional Proxy Testing & Chain Analysis Platform</div>', unsafe_allow_html=True)
 
-def render_security_notice():
-    st.warning("""
-    **Security Notice:** This tool tests public HTTP proxies and proxy chains for educational purposes. 
-    Public proxies may log traffic, inject ads, or be compromised. Use reputable VPN services for real privacy protection.
-    """)
-    
-    if st.sidebar.available:
-        st.info("Sidebar is available - controls shown in sidebar")
-    else:
-        st.info("Note: Due to sidebar rendering issues, controls are shown below")
-
 def render_control_panel():
     st.markdown("## Control Panel")
     
-    # Settings Section
     col1, col2 = st.columns([1, 2])
     
     with col1:
-        st.markdown("### Settings")
+        st.markdown("### Quick Actions")
         
-        # Connection Mode
-        st.session_state.connection_mode = st.radio(
-            "Connection Type:",
-            ["Single Proxy", "Proxy Chain"],
-            index=0 if st.session_state.connection_mode == "Single Proxy" else 1
-        )
-        
-        # Filters
-        st.session_state.only_common_ports = st.checkbox(
-            "Only common ports",
-            value=st.session_state.only_common_ports
-        )
-        
-        # Load Proxies
-        if st.button("🔄 Load Proxies", use_container_width=True):
-            with st.spinner("Loading proxy lists..."):
-                proxies = asyncio.run(load_all_proxies())
+        # Load and validate proxies
+        if st.button("🔄 Load & Validate Proxies", use_container_width=True):
+            with st.spinner("Loading and validating proxies..."):
+                proxies = asyncio.run(load_proxies_with_validation())
                 st.session_state.proxies = proxies
-                st.success(f"Loaded {len(proxies):,} proxies!")
+                st.session_state.good_proxies = [p for p in proxies if p.status == "working"]
+                st.success(f"Loaded {len(proxies)} proxies ({len(st.session_state.good_proxies)} validated)")
         
-        # Status
-        st.markdown("### Status")
-        if st.session_state.connected and st.session_state.selected_proxy:
-            st.markdown('<div class="status-connected">🟢 Connected</div>', unsafe_allow_html=True)
-            st.text(f"Server: {st.session_state.selected_proxy.host}:{st.session_state.selected_proxy.port}")
-        else:
-            st.markdown('<div class="status-disconnected">🔴 Disconnected</div>', unsafe_allow_html=True)
+        # Quick stats from database
+        db_count = len(load_good_proxies(1000))
+        st.info(f"📊 {db_count} good proxies in database")
+        
+        # Load saved chains
+        if st.button("📥 Load Saved Chains", use_container_width=True):
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM proxy_chains ORDER BY created_at DESC LIMIT 5")
+            chains = cursor.fetchall()
+            conn.close()
+            if chains:
+                st.success(f"Loaded {len(chains)} saved chains")
     
     with col2:
-        st.markdown("### Proxy Configuration")
-        
-        # Apply filters
-        filtered_proxies = st.session_state.proxies
-        if st.session_state.only_common_ports:
-            filtered_proxies = [p for p in filtered_proxies if p.port in COMMON_PORTS]
-        
-        if filtered_proxies:
-            st.info(f"📊 {len(filtered_proxies):,} proxies available")
+        if st.session_state.good_proxies:
+            st.markdown("### Working Proxies")
             
-            if st.session_state.connection_mode == "Single Proxy":
-                # Single proxy mode
-                sample_proxies = filtered_proxies[:100]
-                proxy_options = [f"{p.host}:{p.port}" for p in sample_proxies]
-                selected = st.selectbox("Select Proxy:", proxy_options)
+            # Display working proxies with geo data
+            for proxy in st.session_state.good_proxies[:5]:
+                location = f"{proxy.city}, {proxy.country}" if proxy.city else proxy.country or "Unknown"
+                st.markdown(f"""
+                <div class="status-badge status-working">
+                    {proxy.host}:{proxy.port} | {location} | {proxy.latency:.0f}ms
+                </div>
+                """, unsafe_allow_html=True)
                 
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    if st.button("🧪 Test Proxy", use_container_width=True):
-                        for p in sample_proxies:
-                            if f"{p.host}:{p.port}" == selected:
-                                with st.spinner("Testing..."):
-                                    result = asyncio.run(test_proxy(p))
-                                    if result.success:
-                                        st.session_state.selected_proxy = p
-                                        st.session_state.connected = True
-                                        st.success(f"✅ Working! Latency: {result.response_time:.0f}ms")
-                                    else:
-                                        st.error(f"❌ Failed: {result.error}")
-                                break
-                
-                with col_b:
-                    if st.button("❌ Disconnect", use_container_width=True):
-                        st.session_state.connected = False
-                        st.session_state.selected_proxy = None
-                        st.info("Disconnected")
-                
-                # Batch test
-                test_count = st.slider("Batch test count:", 10, min(500, len(filtered_proxies)), 50)
-                if st.button("🚀 Test Batch", use_container_width=True):
-                    with st.spinner(f"Testing {test_count} proxies..."):
-                        sample = random.sample(filtered_proxies, test_count)
-                        results = asyncio.run(batch_test_proxies(sample))
-                        st.session_state.test_results = results
-                        success_count = sum(1 for r in results if r.success)
-                        st.success(f"Tested {len(results)} proxies: {success_count} working")
-            
-            else:
-                # Chain mode
-                st.markdown("**Current Chain:**")
-                if st.session_state.proxy_chain:
-                    for i, p in enumerate(st.session_state.proxy_chain):
-                        col_p, col_q = st.columns([4, 1])
-                        with col_p:
-                            st.text(f"{i+1}. {p.host}:{p.port}")
-                        with col_q:
-                            if st.button("❌", key=f"rm_{i}"):
-                                st.session_state.proxy_chain.pop(i)
-                                st.rerun()
-                else:
-                    st.info("No proxies in chain")
-                
-                sample_proxies = filtered_proxies[:50]
-                proxy_options = [f"{p.host}:{p.port}" for p in sample_proxies]
-                selected = st.selectbox("Add to chain:", proxy_options)
-                
-                if st.button("➕ Add to Chain", use_container_width=True):
-                    for p in sample_proxies:
-                        if f"{p.host}:{p.port}" == selected:
-                            if len(st.session_state.proxy_chain) < 5:
-                                st.session_state.proxy_chain.append(p)
-                                st.rerun()
-                            else:
-                                st.error("Maximum 5 proxies in chain")
-                            break
-                
-                if len(st.session_state.proxy_chain) >= 2:
-                    if st.button("🧪 Test Chain", use_container_width=True):
-                        st.success(f"Chain configured with {len(st.session_state.proxy_chain)} hops")
-        else:
-            st.info("Load proxies to start testing")
+            # Quick connect to best
+            if st.button("⚡ Connect to Fastest", use_container_width=True):
+                fastest = min(st.session_state.good_proxies, key=lambda p: p.latency or 9999)
+                st.success(f"Connected to {fastest.host}:{fastest.port} ({fastest.latency:.0f}ms)")
 
-def render_results_section():
-    st.markdown("---")
-    
-    tabs = st.tabs(["📊 Results", "📈 Analytics", "🗺️ Map"])
-    
-    with tabs[0]:
-        if st.session_state.test_results:
-            results = st.session_state.test_results
-            working = [r for r in results if r.success]
+def render_map():
+    """Render actual geographic map with real proxy locations."""
+    if st.session_state.good_proxies:
+        # Prepare map data
+        map_data = []
+        for proxy in st.session_state.good_proxies:
+            if proxy.lat and proxy.lon:
+                map_data.append({
+                    "lat": proxy.lat,
+                    "lon": proxy.lon,
+                    "proxy": f"{proxy.host}:{proxy.port}",
+                    "city": proxy.city or "Unknown",
+                    "country": proxy.country or "Unknown",
+                    "latency": proxy.latency or 0
+                })
+        
+        if map_data:
+            df_map = pd.DataFrame(map_data)
             
-            # Metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Tested", len(results))
-            with col2:
-                st.metric("Working", len(working))
-            with col3:
-                st.metric("Success Rate", f"{(len(working)/len(results)*100):.1f}%")
-            with col4:
-                if working:
-                    avg_latency = np.mean([r.response_time for r in working])
-                    st.metric("Avg Latency", f"{avg_latency:.0f}ms")
-            
-            # Results table
-            df = pd.DataFrame([
-                {
-                    "Host": r.proxy.host,
-                    "Port": r.proxy.port,
-                    "Status": "✅" if r.success else "❌",
-                    "Latency (ms)": round(r.response_time) if r.success else None,
-                    "Detected IP": r.detected_ip if r.success else None,
-                    "Error": r.error if not r.success else None
-                }
-                for r in results
-            ])
-            
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            # Export
-            csv = df.to_csv(index=False)
-            st.download_button(
-                "📥 Download CSV",
-                csv,
-                "proxy_results.csv",
-                "text/csv"
+            fig = px.scatter_mapbox(
+                df_map,
+                lat="lat",
+                lon="lon",
+                hover_name="proxy",
+                hover_data=["city", "country", "latency"],
+                color="latency",
+                size="latency",
+                color_continuous_scale="Viridis",
+                size_max=20,
+                zoom=2,
+                title="Working Proxy Locations"
             )
+            
+            fig.update_layout(
+                mapbox_style="open-street-map",
+                height=500,
+                margin={"r": 0, "t": 30, "l": 0, "b": 0}
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No test results yet. Run tests from the Control Panel above.")
+            st.info("No geographic data available for proxies")
+    else:
+        st.info("Load proxies to see geographic distribution")
+
+def render_analytics():
+    """Show analytics from database."""
+    st.markdown("### Historical Analytics")
     
-    with tabs[1]:
-        if st.session_state.test_results:
-            working = [r for r in st.session_state.test_results if r.success]
-            if working:
-                # Latency distribution
-                latencies = [r.response_time for r in working]
-                fig = px.histogram(latencies, nbins=30, title="Latency Distribution")
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Port analysis
-                port_data = {}
-                for r in st.session_state.test_results:
-                    port = r.proxy.port
-                    if port not in port_data:
-                        port_data[port] = {"total": 0, "success": 0}
-                    port_data[port]["total"] += 1
-                    if r.success:
-                        port_data[port]["success"] += 1
-                
-                if port_data:
-                    df_ports = pd.DataFrame([
-                        {"Port": p, "Success Rate": d["success"]/d["total"]*100, "Total": d["total"]}
-                        for p, d in port_data.items()
-                    ])
-                    fig = px.bar(df_ports, x="Port", y="Success Rate", title="Success Rate by Port")
-                    st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No data to analyze yet.")
+    # Load all good proxies from DB
+    all_good = load_good_proxies(1000)
     
-    with tabs[2]:
-        st.info("Geographic mapping coming soon!")
+    if all_good:
+        df = pd.DataFrame(all_good, columns=['Host', 'Port', 'Latency', 'Last Tested', 'Success Rate', 
+                                             'Country', 'City', 'Lat', 'Lon'])
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Country distribution
+            country_counts = df['Country'].value_counts().head(10)
+            fig = px.bar(x=country_counts.values, y=country_counts.index, 
+                        orientation='h', title="Top 10 Countries")
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            # Latency distribution
+            fig = px.histogram(df['Latency'].dropna(), nbins=30, 
+                             title="Latency Distribution (ms)")
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Best proxies table
+        st.markdown("### Top Performing Proxies")
+        best_df = df.nsmallest(10, 'Latency')[['Host', 'Port', 'Latency', 'Country', 'City']]
+        st.dataframe(best_df, use_container_width=True, hide_index=True)
 
 # Main App
 def main():
     render_header()
-    render_security_notice()
-    render_control_panel()
-    render_results_section()
     
-    # Footer
+    st.warning("""
+    **Security Notice:** This tool tests public HTTP proxies for educational purposes. 
+    Public proxies may log traffic or be compromised. Use reputable VPN services for real privacy.
+    """)
+    
+    render_control_panel()
+    
     st.markdown("---")
-    st.markdown(
-        """<div style='text-align: center; color: #666;'>
-        ProxyStream Advanced v2.0 | Educational Tool for Proxy Testing
-        </div>""",
-        unsafe_allow_html=True
-    )
+    
+    tabs = st.tabs(["🗺️ Map", "📊 Analytics", "⛓️ Chains", "💾 Database"])
+    
+    with tabs[0]:
+        render_map()
+    
+    with tabs[1]:
+        render_analytics()
+    
+    with tabs[2]:
+        st.info("Chain management - configure proxy chains from validated proxies")
+        if st.session_state.good_proxies:
+            chain = st.multiselect("Build chain:", 
+                                  [f"{p.host}:{p.port}" for p in st.session_state.good_proxies])
+            if len(chain) >= 2 and st.button("Save Chain"):
+                save_proxy_chain({"chain": chain, "latency": 0})
+                st.success("Chain saved to database")
+    
+    with tabs[3]:
+        st.markdown("### Database Management")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Good Proxies", len(load_good_proxies(10000)))
+        with col2:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM proxy_chains")
+            chain_count = cursor.fetchone()[0]
+            conn.close()
+            st.metric("Saved Chains", chain_count)
+        with col3:
+            if st.button("🗑️ Clear Old Data"):
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM good_proxies WHERE last_tested < datetime('now', '-30 days')")
+                conn.commit()
+                conn.close()
+                st.success("Cleared old data")
 
 if __name__ == "__main__":
     main()
