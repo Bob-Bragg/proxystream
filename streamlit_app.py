@@ -17,43 +17,227 @@ import streamlit.components.v1 as components
 from requests.exceptions import ProxyError, SSLError, ConnectTimeout, ReadTimeout, ConnectionError as ReqConnectionError
 import socket
 
-# ProxyStream Configuration
+# Professional ProxyStream Configuration
 st.set_page_config(
-    page_title="ProxyStream Premium - Advanced Proxy Testing",
-    page_icon="🛡️",
+    page_title="ProxyStream - Professional Proxy Testing",
+    page_icon="🔗",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Enhanced Theme/CSS
+# Professional Theme - Clean Enterprise Style
 st.markdown("""
 <style>
-    .stApp { background: linear-gradient(135deg, #0f1419 0%, #1a1f2e 100%); color: white; }
-    .main-header { text-align: center; font-size: 36px; font-weight: 700; margin-bottom: 30px; color: white;
-                   display: flex; align-items: center; justify-content: center; gap: 16px; }
-    .metric-card { background: rgba(255, 255, 255, 0.05); backdrop-filter: blur(10px); padding: 24px; border-radius: 16px;
-                   margin: 10px 0; border: 1px solid rgba(255, 255, 255, 0.1); transition: all 0.3s ease; }
-    .proxy-status-connected { color: #10b981; font-weight: bold; background: rgba(16,185,129,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(16,185,129,.2); }
-    .proxy-status-disconnected { color: #ef4444; font-weight: bold; background: rgba(239,68,68,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(239,68,68,.2); }
-    .proxy-status-warning { color: #f59e0b; font-weight: bold; background: rgba(245,158,11,.1); padding: 8px 16px; border-radius: 8px; border: 1px solid rgba(245,158,11,.2); }
-    .chain-hop { background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 12px; margin: 8px 0; }
-    .chain-arrow { color: #3b82f6; font-size: 20px; text-align: center; margin: 8px 0; }
-    .location-card { background: rgba(255, 255, 255, 0.08); backdrop-filter: blur(10px); padding: 16px; border-radius: 12px;
-                     margin: 8px 0; border: 1px solid rgba(255, 255, 255, 0.15); }
-    [data-testid="metric-container"] { background: rgba(255,255,255,.05); backdrop-filter: blur(10px);
-        border: 1px solid rgba(255,255,255,.1); padding: 1.5rem; border-radius: 16px; margin: .5rem 0; }
-    [data-testid="metric-container"] > div { color: white; }
-    [data-testid="metric-container"] label { color: #94a3b8 !important; }
-    .stButton > button { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border: none; border-radius: 12px; font-weight: 600; transition: all .3s ease; }
-    .stButton > button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(102,126,234,.4); }
-    #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
-    .country-stats { background: rgba(255,255,255,.05); padding: 12px; border-radius: 8px; margin: 8px 0; font-size: 14px; }
-    .security-warning { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); padding: 12px; border-radius: 8px; margin: 8px 0; }
-    .chain-warning { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); padding: 12px; border-radius: 8px; margin: 8px 0; }
+    /* Base Layout */
+    .stApp { 
+        background: #f8fafc; 
+        color: #1e293b;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    }
+    
+    /* Headers */
+    .main-header {
+        color: #0f172a;
+        font-size: 32px;
+        font-weight: 600;
+        margin-bottom: 8px;
+        text-align: left;
+    }
+    
+    .sub-header {
+        color: #64748b;
+        font-size: 16px;
+        margin-bottom: 32px;
+        font-weight: 400;
+    }
+    
+    /* Cards */
+    .metric-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 24px;
+        margin: 16px 0;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    }
+    
+    .status-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 8px 0;
+    }
+    
+    /* Status Indicators */
+    .status-indicator {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        margin: 4px 0;
+    }
+    
+    .status-connected {
+        background: #dcfce7;
+        color: #166534;
+        border: 1px solid #bbf7d0;
+    }
+    
+    .status-disconnected {
+        background: #fef2f2;
+        color: #991b1b;
+        border: 1px solid #fecaca;
+    }
+    
+    .status-warning {
+        background: #fefce8;
+        color: #a16207;
+        border: 1px solid #fde68a;
+    }
+    
+    .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+        margin-right: 8px;
+    }
+    
+    .dot-green { background: #10b981; }
+    .dot-red { background: #ef4444; }
+    .dot-yellow { background: #f59e0b; }
+    .dot-gray { background: #6b7280; }
+    
+    /* Buttons */
+    .stButton > button {
+        background: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-weight: 500;
+        font-size: 14px;
+        transition: all 0.2s;
+    }
+    
+    .stButton > button:hover {
+        background: #1d4ed8;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Sidebar */
+    .css-1d391kg {
+        background: white;
+        border-right: 1px solid #e2e8f0;
+    }
+    
+    /* Metrics */
+    [data-testid="metric-container"] {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 8px 0;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    }
+    
+    [data-testid="metric-container"] > div {
+        color: #0f172a;
+    }
+    
+    [data-testid="metric-container"] label {
+        color: #64748b !important;
+        font-weight: 500;
+    }
+    
+    /* Tables */
+    .dataframe {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+    }
+    
+    /* Alert Boxes */
+    .info-box {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 16px 0;
+        color: #1e40af;
+    }
+    
+    .warning-box {
+        background: #fefce8;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 16px 0;
+        color: #a16207;
+    }
+    
+    .error-box {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 16px 0;
+        color: #991b1b;
+    }
+    
+    .success-box {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 8px;
+        padding: 16px;
+        margin: 16px 0;
+        color: #166534;
+    }
+    
+    /* Location Cards */
+    .location-card {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 20px;
+        margin: 12px 0;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    }
+    
+    .location-header {
+        font-weight: 600;
+        color: #0f172a;
+        margin-bottom: 12px;
+        font-size: 16px;
+    }
+    
+    .location-detail {
+        color: #64748b;
+        margin: 6px 0;
+        font-size: 14px;
+    }
+    
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+        .main-header {
+            font-size: 24px;
+            text-align: center;
+        }
+        .metric-card {
+            padding: 16px;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# Enhanced Geolocation Functions
+# Enhanced Geolocation Functions (preserved from previous version)
 @st.cache_data(ttl=1800, show_spinner=False)
 def get_user_location() -> Optional[Dict[str, Any]]:
     """Detect user's real location using multiple services"""
@@ -80,7 +264,7 @@ def get_user_location() -> Optional[Dict[str, Any]]:
                     'timezone': data.get('timezone'),
                     'postal': data.get('postal') or data.get('zip')
                 }
-        except Exception:
+        except Exception as e:
             continue
     return None
 
@@ -126,9 +310,10 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
     c = 2 * math.asin(math.sqrt(a))
     r = 6371  # Earth's radius in kilometers
+    
     return c * r
 
-# Dynamic proxy loader
+# Proxy loading and testing functions (preserved)
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
     sources = [
@@ -136,7 +321,7 @@ def load_proxy_list(force_key: int = 0) -> Tuple[List[str], str, List[str]]:
         "https://cdn.jsdelivr.net/gh/arandomguyhere/Proxy-Hound@main/docs/by_type/https_hunted.txt",
         "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
     ]
-    headers = {"User-Agent": "ProxyStream/3.0 Chain Testing"}
+    headers = {"User-Agent": "ProxyStream/3.0 Professional"}
     errors = []
 
     def parse_lines(text: str) -> List[str]:
@@ -227,7 +412,7 @@ def tcp_ping(host: str, port: int, timeout: float = 4.0) -> bool:
 def detect_proxy_capabilities(proxy_http_url: str, timeout: int = 8) -> Dict[str, Any]:
     caps = {"http_ok": False, "https_ok": False, "ip_http": None, "ip_https": None,
             "err_http": "", "err_https": "", "latency_ms": 0}
-    headers = {"User-Agent": "ProxyStream/3.0 Chain Testing"}
+    headers = {"User-Agent": "ProxyStream/3.0 Professional"}
     proxies = {"http": proxy_http_url, "https": proxy_http_url}
     
     try:
@@ -251,9 +436,8 @@ def detect_proxy_capabilities(proxy_http_url: str, timeout: int = 8) -> Dict[str
     
     return caps
 
-# Enhanced proxy connection testing
 def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
-    """Test single proxy with enhanced location detection"""
+    """Test proxy with enhanced location detection"""
     proxy_http = normalize_proxy_http(proxy)
     host, port = proxy.split(':')[0], int(proxy.split(':')[1])
     
@@ -287,461 +471,167 @@ def test_proxy_connection(proxy: str, timeout: int = 10) -> tuple[bool, dict]:
         'ip_detected': caps.get("ip_http") or caps.get("ip_https"), 'location': proxy_location
     }
 
-# NEW: Proxy Chain Testing Functions
-def test_proxy_chain(proxy_list: List[str], timeout: int = 25) -> tuple[bool, dict]:
-    """Test a chain of proxies working together with comprehensive validation"""
-    if len(proxy_list) == 0:
-        return False, {'error': 'Empty chain', 'chain_working': False}
-    
-    if len(proxy_list) == 1:
-        success, metrics = test_proxy_connection(proxy_list[0], timeout)
-        if success:
-            metrics['chain_working'] = True
-            metrics['chain_length'] = 1
-            metrics['chain_latency'] = metrics.get('latency', 0)
-            metrics['anonymization_level'] = 65
-            metrics['chain_efficiency'] = 95
-        return success, metrics
-    
-    # Test each individual proxy first
-    individual_results = []
-    total_latency = 0
-    working_proxies = []
-    
-    st.write("Testing individual proxies in chain...")
-    progress_bar = st.progress(0)
-    
-    for i, proxy in enumerate(proxy_list):
-        progress_bar.progress((i + 1) / len(proxy_list))
-        success, metrics = test_proxy_connection(proxy, timeout=max(8, timeout//len(proxy_list)))
-        
-        individual_results.append({
-            'proxy': proxy,
-            'success': success,
-            'metrics': metrics,
-            'hop_number': i + 1
-        })
-        
-        if success:
-            working_proxies.append(proxy)
-            total_latency += metrics.get('latency', 0)
-            st.write(f"✅ Hop {i+1}: {proxy} - {metrics.get('latency', 0)}ms")
-        else:
-            st.write(f"❌ Hop {i+1}: {proxy} - {metrics.get('error', 'Failed')}")
-            return False, {
-                'error': f'Hop {i+1} failed: {metrics.get("error", "Unknown")}',
-                'failed_hop': i + 1,
-                'failed_proxy': proxy,
-                'individual_results': individual_results,
-                'chain_working': False,
-                'chain_length': len(proxy_list)
-            }
-    
-    progress_bar.empty()
-    
-    # Test multiple endpoints through the chain for reliability
-    test_endpoints = [
-        "http://httpbin.org/ip",
-        "http://httpbin.org/headers", 
-        "http://example.com"
-    ]
-    
-    chain_results = []
-    successful_tests = 0
-    
-    st.write("Testing chain connectivity...")
-    
-    for endpoint in test_endpoints:
-        try:
-            start_time = time.perf_counter()
-            primary_proxy = normalize_proxy_http(proxy_list[0])
-            proxies = {"http": primary_proxy, "https": primary_proxy}
-            headers = {
-                "User-Agent": "ProxyStream Chain Test",
-                "Accept": "application/json,text/html,*/*"
-            }
-            
-            response = requests.get(endpoint, 
-                                  proxies=proxies, 
-                                  headers=headers, 
-                                  timeout=timeout,
-                                  allow_redirects=True)
-            
-            chain_latency = (time.perf_counter() - start_time) * 1000
-            
-            if response.ok:
-                successful_tests += 1
-                result_data = {
-                    'endpoint': endpoint,
-                    'status_code': response.status_code,
-                    'latency': round(chain_latency),
-                    'success': True
-                }
-                
-                # Try to extract IP if it's httpbin
-                if 'httpbin.org/ip' in endpoint:
-                    try:
-                        result_data['exit_ip'] = response.json().get("origin")
-                    except:
-                        pass
-                elif 'httpbin.org/headers' in endpoint:
-                    try:
-                        result_data['headers_received'] = len(response.json().get("headers", {}))
-                    except:
-                        pass
-                
-                chain_results.append(result_data)
-                st.write(f"✅ {endpoint}: {response.status_code} ({chain_latency:.0f}ms)")
-            else:
-                chain_results.append({
-                    'endpoint': endpoint,
-                    'status_code': response.status_code,
-                    'latency': round(chain_latency),
-                    'success': False
-                })
-                st.write(f"⚠️ {endpoint}: {response.status_code}")
-                
-        except Exception as e:
-            chain_results.append({
-                'endpoint': endpoint,
-                'error': str(e)[:100],
-                'success': False
-            })
-            st.write(f"❌ {endpoint}: {str(e)[:50]}...")
-    
-    # Determine if chain is working (at least 50% success rate)
-    success_rate = successful_tests / len(test_endpoints)
-    chain_working = success_rate >= 0.5
-    
-    if chain_working:
-        # Calculate metrics
-        avg_latency = sum(r.get('latency', 0) for r in chain_results if r.get('latency')) / max(1, len([r for r in chain_results if r.get('latency')]))
-        
-        # Get exit IP from successful httpbin test
-        exit_ip = None
-        for result in chain_results:
-            if result.get('exit_ip'):
-                exit_ip = result['exit_ip']
-                break
-        
-        # Calculate performance metrics
-        efficiency = max(10, 100 - (len(proxy_list) * 12) - ((1 - success_rate) * 30))
-        estimated_speed = max(5, 120 - (avg_latency / 8) - (len(proxy_list) * 10))
-        anonymization_level = min(95, 55 + (len(proxy_list) * 10) + (success_rate * 15))
-        
-        return True, {
-            'chain_working': True,
-            'chain_latency': round(avg_latency),
-            'total_estimated_latency': round(total_latency),
-            'exit_ip': exit_ip or "Unknown",
-            'chain_length': len(proxy_list),
-            'individual_results': individual_results,
-            'chain_test_results': chain_results,
-            'estimated_speed': round(estimated_speed, 1),
-            'chain_efficiency': round(efficiency),
-            'anonymization_level': round(anonymization_level),
-            'success_rate': round(success_rate * 100),
-            'working_proxies': len(working_proxies)
-        }
-    else:
-        return False, {
-            'error': f'Chain reliability too low: {success_rate*100:.0f}% success rate',
-            'chain_working': False,
-            'individual_results': individual_results,
-            'chain_test_results': chain_results,
-            'chain_length': len(proxy_list),
-            'success_rate': round(success_rate * 100),
-            'working_proxies': len(working_proxies)
-        }
-
-def get_chain_geolocation(proxy_chain: List[str]) -> Dict[str, Any]:
-    """Get geolocation data for each proxy in chain"""
-    chain_locations = []
-    
-    for i, proxy in enumerate(proxy_chain):
-        host = proxy.split(':')[0]
-        location = get_detailed_location(host)
-        chain_locations.append({
-            'hop': i + 1,
-            'proxy': proxy,
-            'location': location,
-            'host': host
-        })
-    
-    return {
-        'chain_path': chain_locations,
-        'entry_point': chain_locations[0]['location'] if chain_locations else None,
-        'exit_point': chain_locations[-1]['location'] if chain_locations else None,
-        'hops': len(chain_locations),
-        'geographic_diversity': calculate_geographic_diversity(chain_locations)
-    }
-
-def calculate_geographic_diversity(chain_locations: List[Dict]) -> Dict[str, Any]:
-    """Calculate how geographically diverse the chain is"""
-    countries = set()
-    isps = set()
-    timezones = set()
-    
-    for hop in chain_locations:
-        loc = hop.get('location')
-        if loc:
-            if loc.get('country_code'):
-                countries.add(loc['country_code'])
-            if loc.get('isp'):
-                isps.add(loc['isp'])
-            if loc.get('timezone'):
-                timezones.add(loc['timezone'])
-    
-    return {
-        'unique_countries': len(countries),
-        'unique_isps': len(isps),
-        'unique_timezones': len(timezones),
-        'diversity_score': min(100, (len(countries) * 25) + (len(isps) * 15) + (len(timezones) * 10))
-    }
-
-def optimize_proxy_chain(proxy_list: List[str], target_countries: List[str] = None) -> List[str]:
-    """Optimize proxy chain for better performance and geographic diversity"""
-    if len(proxy_list) <= 1:
-        return proxy_list
-    
-    # Test all proxies and sort by performance
-    tested_proxies = []
-    for proxy in proxy_list:
-        success, metrics = test_proxy_connection(proxy, timeout=5)
-        if success:
-            tested_proxies.append((proxy, metrics))
-    
-    # Sort by latency (fastest first)
-    tested_proxies.sort(key=lambda x: x[1].get('latency', 999))
-    
-    # If target countries specified, prioritize geographic diversity
-    if target_countries:
-        optimized = []
-        used_countries = set()
-        
-        for proxy, metrics in tested_proxies:
-            host = proxy.split(':')[0]
-            country = IP_TO_COUNTRY.get(host, 'US')
-            
-            if country in target_countries and country not in used_countries:
-                optimized.append(proxy)
-                used_countries.add(country)
-                
-                if len(optimized) >= len(target_countries):
-                    break
-        
-        return optimized
-    
-    # Otherwise, just return fastest proxies with some geographic diversity
-    optimized = []
-    used_countries = set()
-    
-    for proxy, metrics in tested_proxies:
-        host = proxy.split(':')[0]
-        country = IP_TO_COUNTRY.get(host, 'US')
-        
-        # Add if it's a new country or we don't have enough proxies yet
-        if country not in used_countries or len(optimized) < 3:
-            optimized.append(proxy)
-            used_countries.add(country)
-            
-            if len(optimized) >= 4:  # Max 4 hops for performance
-                break
-    
-    return optimized
-
-def create_chain_map():
-    """Create enhanced map showing full proxy chain path"""
+def create_professional_map():
+    """Create clean, professional map visualization"""
     fig = go.Figure()
     
-    lons = []
-    lats = []
-    texts = []
-    colors = []
-    
-    # Add user location if available
+    # Add user location
     if 'user_location' in st.session_state and st.session_state.user_location:
         user_loc = st.session_state.user_location
         if user_loc.get('lat') and user_loc.get('lon'):
-            lons.append(user_loc['lon'])
-            lats.append(user_loc['lat'])
-            texts.append(f"Start: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}")
-            colors.append('#ef4444')
-    
-    # Add chain locations
-    if 'chain_locations' in st.session_state and st.session_state.chain_locations:
-        chain_data = st.session_state.chain_locations
-        for hop_data in chain_data['chain_path']:
-            loc = hop_data['location']
-            if loc and loc.get('lat') and loc.get('lon'):
-                lons.append(loc['lon'])
-                lats.append(loc['lat'])
-                texts.append(f"Hop {hop_data['hop']}: {loc.get('city', 'Unknown')}, {loc.get('country', 'Unknown')}")
-                
-                # Color code by hop
-                hop_colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444']
-                colors.append(hop_colors[(hop_data['hop'] - 1) % len(hop_colors)])
-    
-    # Add markers
-    if lons and lats:
-        for i, (lon, lat, text, color) in enumerate(zip(lons, lats, texts, colors)):
-            symbol = 'circle' if i == 0 else ('diamond' if i == len(lons)-1 else 'square')
-            size = 15 if i == 0 else (18 if i == len(lons)-1 else 12)
-            
             fig.add_trace(go.Scattergeo(
-                lon=[lon], lat=[lat],
+                lon=[user_loc['lon']], lat=[user_loc['lat']],
                 mode='markers',
-                marker=dict(size=size, color=color, symbol=symbol, 
-                          line=dict(width=2, color='white')),
-                name=f'Hop {i}' if i > 0 else 'Start',
-                text=[text],
+                marker=dict(size=12, color='#ef4444', symbol='circle'),
+                name='Your Location',
+                text=[f"You: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}"],
                 hoverinfo='text'
             ))
-        
-        # Draw connection path
-        if len(lons) > 1:
+    
+    # Add proxy location
+    if st.session_state.proxy_connected:
+        proxy_loc = st.session_state.get('proxy_location')
+        if proxy_loc and proxy_loc.get('lat') and proxy_loc.get('lon'):
             fig.add_trace(go.Scattergeo(
-                lon=lons, lat=lats,
-                mode='lines',
-                line=dict(width=3, color='#64748b', dash='dash'),
-                name='Chain Path',
-                showlegend=False,
-                hoverinfo='skip'
+                lon=[proxy_loc['lon']], lat=[proxy_loc['lat']],
+                mode='markers',
+                marker=dict(size=14, color='#2563eb', symbol='square'),
+                name='Proxy Server',
+                text=[f"Proxy: {proxy_loc.get('city', 'Unknown')}, {proxy_loc.get('country', 'Unknown')}"],
+                hoverinfo='text'
             ))
+            
+            # Connection line
+            if ('user_location' in st.session_state and 
+                st.session_state.user_location and
+                st.session_state.user_location.get('lat') and 
+                st.session_state.user_location.get('lon')):
+                
+                user_loc = st.session_state.user_location
+                fig.add_trace(go.Scattergeo(
+                    lon=[user_loc['lon'], proxy_loc['lon']],
+                    lat=[user_loc['lat'], proxy_loc['lat']],
+                    mode='lines',
+                    line=dict(width=2, color='#64748b', dash='dash'),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
     
     fig.update_layout(
         geo=dict(
             showframe=False, showcoastlines=True, projection_type='natural earth',
-            bgcolor='rgba(0,0,0,0)', landcolor='#374151', oceancolor='#1e293b', coastlinecolor='#6b7280'
+            bgcolor='#f8fafc', landcolor='#e2e8f0', oceancolor='#cbd5e1', coastlinecolor='#94a3b8'
         ),
-        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)', 
-        height=400, margin=dict(l=0,r=0,t=0,b=0),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5, font=dict(color="white"))
+        plot_bgcolor='#f8fafc', paper_bgcolor='#f8fafc', height=300, margin=dict(l=0,r=0,t=0,b=0),
+        showlegend=False
     )
     
     return fig
 
-# Session state initialization (enhanced for chains)
+# Session state initialization
 session_defaults = {
     "proxy_connected": False, "current_proxy": None, "connection_start_time": None,
     "proxy_metrics": {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False},
     "selected_country": "US", "active_proxy": None, "force_reload_key": 0,
-    "only_common_ports": True, "user_location": None, "proxy_location": None,
-    # NEW: Chain-specific state
-    "proxy_chain": [], "chain_connected": False, "chain_metrics": {},
-    "chain_locations": None, "connection_mode": "single"  # "single" or "chain"
+    "only_common_ports": True, "user_location": None, "proxy_location": None
 }
 
 for key, default_value in session_defaults.items():
     if key not in st.session_state:
         st.session_state[key] = default_value
 
-def servers_to_list_control(n: int) -> Tuple[int, bool]:
-    shuffle = st.checkbox("Shuffle", True)
-    if n <= 1:
-        st.caption(f"Servers available: {n}")
-        return n, shuffle
-    max_slider = min(500, n)
-    default = min(50, n)
-    step = 1 if n < 20 else 10
-    val = st.slider("Servers to list", 1, max_slider, default, step=step)
-    return val, shuffle
-
 def main():
-    st.markdown('<div class="main-header">🛡️ ProxyStream Premium</div>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align: center; color: #94a3b8; font-size: 16px; margin-bottom: 40px;">Advanced Proxy Testing & Chain Analysis Platform</p>', unsafe_allow_html=True)
+    # Professional Header
+    col_header1, col_header2 = st.columns([3, 1])
+    with col_header1:
+        st.markdown('<div class="main-header">ProxyStream Professional</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sub-header">Enterprise-grade proxy testing and network analysis</div>', unsafe_allow_html=True)
+    with col_header2:
+        if st.button("Refresh Network", type="secondary"):
+            st.session_state.force_reload_key += 1
+            st.rerun()
 
-    # Security warning
-    st.markdown("""
-    <div class="security-warning">
-        <strong>⚠️ Security Notice:</strong> This tool tests public HTTP proxies and proxy chains for educational purposes. 
-        Public proxies may log traffic, inject ads, or be compromised. Never use them for sensitive activities.
-        For real privacy protection, use a reputable VPN service.
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Chain-specific warning
-    st.markdown("""
-    <div class="chain-warning">
-        <strong>🔗 Proxy Chains:</strong> Chaining multiple proxies increases anonymization but reduces speed and reliability. 
-        Each additional hop increases latency and failure probability. Recommended: 2-3 hops maximum.
-    </div>
-    """, unsafe_allow_html=True)
-
+    # Load proxy data
     all_proxies, source_used, load_errors = load_proxy_list(st.session_state.force_reload_key)
 
-    with st.sidebar:
-        st.markdown("## 🔧 Connection Settings")
-        
-        # Connection Mode Selection
-        st.markdown("### Connection Mode")
-        connection_mode = st.radio(
-            "Select connection type:",
-            options=["single", "chain"],
-            index=0 if st.session_state.connection_mode == "single" else 1,
-            format_func=lambda x: "🔗 Single Proxy" if x == "single" else "⛓️ Proxy Chain",
-            horizontal=True
-        )
-        st.session_state.connection_mode = connection_mode
+    # Professional Alert Box
+    if source_used == "fallback":
+        st.markdown("""
+        <div class="warning-box">
+            <strong>Network Notice:</strong> Using fallback proxy list. External proxy sources unavailable.
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="info-box">
+            <strong>Security Notice:</strong> This tool tests public HTTP proxies for network analysis and educational purposes. 
+            Public proxies should not be used for sensitive data transmission.
+        </div>
+        """, unsafe_allow_html=True)
 
-        # Location Detection Section
-        st.markdown("---")
-        st.markdown("### 🎯 Your Location")
+    with st.sidebar:
+        st.markdown("### Network Configuration")
+
+        # Location Detection
+        st.markdown("#### Your Location")
         
-        if st.button("📍 Detect My Location", use_container_width=True):
-            with st.spinner("Detecting your location..."):
+        if st.button("Detect Location", use_container_width=True, type="primary"):
+            with st.spinner("Detecting location..."):
                 user_loc = get_user_location()
                 if user_loc:
                     st.session_state.user_location = user_loc
-                    st.success(f"Located: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}")
+                    st.success("Location detected successfully")
+                    st.rerun()
                 else:
-                    st.error("Could not detect location")
+                    st.error("Location detection failed")
         
+        # Display user location professionally
         if st.session_state.user_location:
             user_loc = st.session_state.user_location
             st.markdown(f"""
             <div class="location-card">
-                <strong>🏠 Your Real Location</strong><br>
-                📍 {user_loc.get('city', 'Unknown')}, {user_loc.get('region', 'Unknown')}<br>
-                🏳️ {user_loc.get('country', 'Unknown')}<br>
-                🌐 IP: {user_loc.get('ip', 'Unknown')}<br>
-                🏢 ISP: {user_loc.get('isp', 'Unknown')[:30]}...
+                <div class="location-header">Your Network Location</div>
+                <div class="location-detail"><strong>City:</strong> {user_loc.get('city', 'Unknown')}</div>
+                <div class="location-detail"><strong>Region:</strong> {user_loc.get('region', 'Unknown')}</div>
+                <div class="location-detail"><strong>Country:</strong> {user_loc.get('country', 'Unknown')}</div>
+                <div class="location-detail"><strong>ISP:</strong> {user_loc.get('isp', 'Unknown')[:30]}...</div>
             </div>
             """, unsafe_allow_html=True)
 
         st.markdown("---")
-        
-        colref1, colref2 = st.columns([3,1])
-        with colref1:
-            st.caption(f"Source: {source_used}")
-            if source_used == "fallback":
-                st.warning("Using fallback list", icon="⚠️")
-        with colref2:
-            if st.button("↻"):
-                st.session_state.force_reload_key += 1
+        st.markdown("#### Proxy Configuration")
 
-        with st.expander("Advanced"):
-            st.session_state.only_common_ports = st.checkbox("Only common ports 80/8080/3128/443", value=st.session_state.only_common_ports)
+        # Filter options
+        with st.expander("Filter Options"):
+            st.session_state.only_common_ports = st.checkbox(
+                "Standard ports only (80, 8080, 3128, 443)", 
+                value=st.session_state.only_common_ports
+            )
 
+        # Process proxy data
         filtered = all_proxies
         if st.session_state.only_common_ports:
             COMMON = {80, 8080, 3128, 443}
-            def okp(p):
-                try:
-                    return int(p.split(":")[1]) in COMMON
-                except:
-                    return False
-            filtered = [p for p in all_proxies if okp(p)]
+            filtered = [p for p in all_proxies if int(p.split(":")[1]) in COMMON]
 
         proxy_data = parse_proxy_list(filtered)
         total_proxies = sum(len(v) for v in proxy_data.values())
-        
-        # Country Selection
+
+        # Network statistics
+        st.markdown(f"""
+        <div class="status-card">
+            <strong>Network Statistics</strong><br>
+            Total Servers: <strong>{total_proxies:,}</strong><br>
+            Countries: <strong>{len(proxy_data)}</strong><br>
+            Source: <strong>{source_used.split('/')[-1] if source_used != 'fallback' else 'Fallback'}</strong>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Country selection
         available_countries = list(proxy_data.keys())
         if available_countries:
             selected_country = st.selectbox(
-                "Select Country",
+                "Target Country",
                 options=available_countries,
                 index=available_countries.index(st.session_state.selected_country) if st.session_state.selected_country in available_countries else 0,
                 format_func=lambda x: f"{get_country_flag(x)} {x}"
@@ -750,587 +640,276 @@ def main():
 
             country_proxies = proxy_data[selected_country]
             
+            # Proxy server selection
             if country_proxies:
-                n_country = len(country_proxies)
-                max_show, shuffle_list = servers_to_list_control(n_country)
-                filter_text = st.text_input("Filter (IP or :port)", "")
+                # Limit display for performance
+                display_proxies = country_proxies[:50]
+                if len(country_proxies) > 50:
+                    st.caption(f"Showing first 50 of {len(country_proxies)} servers")
+                
+                selected_proxy = st.selectbox(
+                    "Proxy Server",
+                    options=display_proxies,
+                    format_func=lambda x: f"{x} ({get_country_flag(selected_country)})"
+                )
 
-                display_proxies = country_proxies.copy()
-                if shuffle_list:
-                    random.shuffle(display_proxies)
-                if filter_text.strip():
-                    term = filter_text.strip()
-                    display_proxies = [p for p in display_proxies if term in p]
-                display_proxies = display_proxies[:max_show]
-
-                # Single Proxy Mode
-                if st.session_state.connection_mode == "single":
-                    selected_proxy = st.selectbox("Proxy Server", options=display_proxies)
-
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("🧪 Test Connection", use_container_width=True):
-                            with st.spinner("Testing proxy..."):
-                                success, metrics = test_proxy_connection(selected_proxy)
-                                if success:
-                                    st.session_state.proxy_connected = True
-                                    st.session_state.current_proxy = selected_proxy
-                                    st.session_state.connection_start_time = datetime.now()
-                                    st.session_state.proxy_metrics = metrics
-                                    st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
-                                    st.session_state.proxy_location = metrics.get('location')
-                                    
-                                    if metrics['http_ok'] and metrics['https_ok']:
-                                        st.success("✅ Proxy working! HTTP & HTTPS supported")
-                                    elif metrics['http_ok']:
-                                        st.warning("⚠️ Proxy working! HTTP only")
-                                    else:
-                                        st.warning("⚠️ Proxy working! HTTPS only")
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Proxy failed: {metrics.get('error', 'Unknown error')}")
-
-                    with col2:
-                        if st.button("❌ Disconnect", use_container_width=True):
-                            st.session_state.proxy_connected = False
-                            st.session_state.current_proxy = None
-                            st.session_state.connection_start_time = None
-                            st.session_state.proxy_metrics = {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False}
-                            st.session_state.active_proxy = None
-                            st.session_state.proxy_location = None
-                            st.success("Disconnected!")
-                            st.rerun()
-
-                # Chain Mode
-                else:
-                    st.markdown("### ⛓️ Chain Builder")
-                    
-                    # Current chain display
-                    if st.session_state.proxy_chain:
-                        st.markdown("**Current Chain:**")
-                        for i, proxy in enumerate(st.session_state.proxy_chain):
-                            col1, col2, col3 = st.columns([1, 4, 1])
-                            with col1:
-                                st.markdown(f"**{i+1}**")
-                            with col2:
-                                host = proxy.split(':')[0]
-                                country = IP_TO_COUNTRY.get(host, 'US')
-                                st.markdown(f"{get_country_flag(country)} `{proxy}`")
-                            with col3:
-                                if st.button("✕", key=f"remove_{i}", help="Remove from chain"):
-                                    st.session_state.proxy_chain.pop(i)
-                                    st.rerun()
-                            
-                            if i < len(st.session_state.proxy_chain) - 1:
-                                st.markdown('<div class="chain-arrow">↓</div>', unsafe_allow_html=True)
-                    
-                    # Add proxy to chain
-                    selected_proxy = st.selectbox("Add Proxy to Chain", options=display_proxies)
-                    
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        if st.button("➕ Add to Chain", use_container_width=True):
-                            if selected_proxy not in st.session_state.proxy_chain:
-                                if len(st.session_state.proxy_chain) < 5:  # Max 5 hops
-                                    st.session_state.proxy_chain.append(selected_proxy)
-                                    st.rerun()
-                                else:
-                                    st.error("Maximum 5 hops allowed")
-                            else:
-                                st.warning("Proxy already in chain")
-                    
-                    with col2:
-                        if st.button("🧹 Clear Chain", use_container_width=True):
-                            st.session_state.proxy_chain = []
-                            st.session_state.chain_connected = False
-                            st.session_state.chain_metrics = {}
-                            st.session_state.chain_locations = None
-                            st.rerun()
-                    
-                    # Chain operations
-                    if len(st.session_state.proxy_chain) >= 2:
-                        st.markdown("**Chain Operations:**")
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            if st.button("🧪 Test Chain", use_container_width=True):
-                                with st.spinner(f"Testing {len(st.session_state.proxy_chain)}-hop chain..."):
-                                    success, metrics = test_proxy_chain(st.session_state.proxy_chain)
-                                    if success:
-                                        st.session_state.chain_connected = True
-                                        st.session_state.chain_metrics = metrics
-                                        st.session_state.chain_locations = get_chain_geolocation(st.session_state.proxy_chain)
-                                        st.session_state.connection_start_time = datetime.now()
-                                        
-                                        # Show detailed results
-                                        st.success(f"✅ Chain operational!")
-                                        st.info(f"📊 Success Rate: {metrics.get('success_rate', 0)}% | "
-                                               f"Anonymization: {metrics.get('anonymization_level', 0)}% | "
-                                               f"Efficiency: {metrics.get('chain_efficiency', 0)}%")
-                                        
-                                        # Show exit IP if detected
-                                        if metrics.get('exit_ip') and metrics['exit_ip'] != 'Unknown':
-                                            st.success(f"🌐 Exit IP: {metrics['exit_ip']}")
-                                        
-                                        st.rerun()
-                                    else:
-                                        st.error(f"❌ Chain failed: {metrics.get('error', 'Unknown error')}")
-                                        
-                                        # Show which hop failed if available
-                                        if metrics.get('failed_hop'):
-                                            st.error(f"Failed at hop {metrics['failed_hop']}: {metrics.get('failed_proxy', 'Unknown')}")
-                                        
-                                        # Show success rate if partial failure
-                                        if metrics.get('success_rate') is not None:
-                                            st.warning(f"Success rate: {metrics['success_rate']}% (minimum 50% required)")
-                        
-                        with col2:
-                            if st.button("⚡ Optimize", use_container_width=True):
-                                with st.spinner("Optimizing chain..."):
-                                    try:
-                                        optimized = optimize_proxy_chain(st.session_state.proxy_chain)
-                                        if len(optimized) >= 2:
-                                            old_length = len(st.session_state.proxy_chain)
-                                            st.session_state.proxy_chain = optimized
-                                            new_length = len(optimized)
-                                            
-                                            if new_length < old_length:
-                                                st.success(f"✅ Optimized: {old_length} → {new_length} hops (removed {old_length - new_length} slow proxies)")
-                                            else:
-                                                st.info(f"✅ Chain already optimal ({new_length} hops)")
-                                            st.rerun()
-                                        else:
-                                            st.error("❌ Not enough working proxies to create an optimized chain")
-                                    except Exception as e:
-                                        st.error(f"Optimization failed: {str(e)}")
-                        
-                        # Disconnect chain button
-                        if st.session_state.chain_connected:
-                            if st.button("❌ Disconnect Chain", use_container_width=True, type="secondary"):
-                                st.session_state.chain_connected = False
-                                st.session_state.chain_metrics = {}
-                                st.session_state.chain_locations = None
-                                st.session_state.connection_start_time = None
-                                st.success("Chain disconnected!")
-                                st.rerun()
-                    
-                    elif len(st.session_state.proxy_chain) == 1:
-                        st.info("💡 Add at least one more proxy to create a chain")
-                        
-                        # Option to test single proxy
-                        if st.button("🧪 Test Single Proxy", use_container_width=True):
-                            with st.spinner("Testing single proxy..."):
-                                success, metrics = test_proxy_connection(st.session_state.proxy_chain[0])
-                                if success:
-                                    st.success(f"✅ Proxy working: {metrics.get('latency', 0)}ms latency")
-                                else:
-                                    st.error(f"❌ Proxy failed: {metrics.get('error', 'Unknown')}")
-                    else:
-                        st.info("🔗 Add proxies to build your chain")
-                        
-                        # Quick chain suggestions
-                        if st.button("🚀 Build Sample Chain", use_container_width=True):
-                            # Create a sample 3-hop chain with geographic diversity
-                            sample_countries = ['US', 'GB', 'DE']
-                            sample_chain = []
-                            
-                            for country in sample_countries:
-                                country_proxies = proxy_data.get(country, [])
-                                if country_proxies:
-                                    sample_chain.append(random.choice(country_proxies))
-                            
-                            if len(sample_chain) >= 2:
-                                st.session_state.proxy_chain = sample_chain
-                                st.success(f"Created sample {len(sample_chain)}-hop chain with geographic diversity!")
+                # Connection controls
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Test Connection", use_container_width=True, type="primary"):
+                        with st.spinner("Testing proxy..."):
+                            success, metrics = test_proxy_connection(selected_proxy, timeout=12)
+                            if success:
+                                st.session_state.proxy_connected = True
+                                st.session_state.current_proxy = selected_proxy
+                                st.session_state.connection_start_time = datetime.now()
+                                st.session_state.proxy_metrics = metrics
+                                st.session_state.active_proxy = normalize_proxy_http(selected_proxy)
+                                st.session_state.proxy_location = metrics.get('location')
+                                st.success("Connection successful")
                                 st.rerun()
                             else:
-                                st.error("Not enough proxies available for sample chain")
+                                st.error(f"Connection failed: {metrics.get('error', 'Unknown error')}")
+
+                with col2:
+                    if st.button("Disconnect", use_container_width=True, type="secondary"):
+                        for key in ["proxy_connected", "current_proxy", "connection_start_time", "active_proxy", "proxy_location"]:
+                            st.session_state[key] = None if key != "proxy_connected" else False
+                        st.session_state.proxy_metrics = {"latency": 0, "speed": 0, "http_ok": False, "https_ok": False}
+                        st.success("Disconnected")
+                        st.rerun()
 
         # Connection Status
         st.markdown("---")
-        st.markdown("## 📊 Status")
+        st.markdown("#### Connection Status")
         
-        if st.session_state.connection_mode == "single" and st.session_state.proxy_connected:
+        if st.session_state.proxy_connected:
             metrics = st.session_state.proxy_metrics
             http_ok = metrics.get('http_ok', False)
             https_ok = metrics.get('https_ok', False)
             
             if http_ok and https_ok:
-                st.markdown('<div class="proxy-status-connected">🟢 Connected (Full)</div>', unsafe_allow_html=True)
+                status_html = '<div class="status-indicator status-connected"><span class="status-dot dot-green"></span>Connected (Full)</div>'
             elif http_ok:
-                st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTP)</div>', unsafe_allow_html=True)
+                status_html = '<div class="status-indicator status-warning"><span class="status-dot dot-yellow"></span>Connected (HTTP)</div>'
+            elif https_ok:
+                status_html = '<div class="status-indicator status-warning"><span class="status-dot dot-yellow"></span>Connected (HTTPS)</div>'
             else:
-                st.markdown('<div class="proxy-status-warning">🟡 Connected (HTTPS)</div>', unsafe_allow_html=True)
-                
-            st.text(f"Server: {st.session_state.current_proxy}")
-            st.text(f"Latency: {metrics.get('latency', 0)}ms")
+                status_html = '<div class="status-indicator status-warning"><span class="status-dot dot-yellow"></span>Connected (Limited)</div>'
             
-        elif st.session_state.connection_mode == "chain" and st.session_state.chain_connected:
-            metrics = st.session_state.chain_metrics
-            st.markdown('<div class="proxy-status-connected">🟢 Chain Active</div>', unsafe_allow_html=True)
-            st.text(f"Hops: {metrics.get('chain_length', 0)}")
-            st.text(f"Total Latency: {metrics.get('chain_latency', 0)}ms")
-            st.text(f"Anonymization: {metrics.get('anonymization_level', 0)}%")
-            st.text(f"Exit IP: {metrics.get('exit_ip', 'Unknown')}")
+            st.markdown(status_html, unsafe_allow_html=True)
+            
+            # Connection details
+            if st.session_state.connection_start_time:
+                duration = datetime.now() - st.session_state.connection_start_time
+                st.text(f"Duration: {str(duration).split('.')[0]}")
+            st.text(f"Server: {st.session_state.current_proxy}")
+            st.text(f"Latency: {st.session_state.proxy_metrics.get('latency', 0)}ms")
             
         else:
-            st.markdown('<div class="proxy-status-disconnected">🔴 Disconnected</div>', unsafe_allow_html=True)
+            st.markdown('<div class="status-indicator status-disconnected"><span class="status-dot dot-red"></span>Disconnected</div>', unsafe_allow_html=True)
 
-    # Main dashboard
-    if (st.session_state.connection_mode == "single" and st.session_state.proxy_connected) or \
-       (st.session_state.connection_mode == "chain" and st.session_state.chain_connected):
-        
+    # Main Dashboard
+    if st.session_state.proxy_connected:
         # Connection Overview
         st.markdown("### Connection Overview")
         
-        if st.session_state.connection_mode == "single":
-            metrics = st.session_state.proxy_metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Type", "Single Proxy")
-            with col2:
-                st.metric("Latency", f"{metrics.get('latency', 0)}ms")
-            with col3:
-                st.metric("Speed Est.", f"{metrics.get('speed', 0):.1f} Mbps")
-            with col4:
-                duration = datetime.now() - st.session_state.connection_start_time if st.session_state.connection_start_time else timedelta(0)
-                st.metric("Session", str(duration).split('.')[0])
-        
-        else:  # Chain mode
-            metrics = st.session_state.chain_metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Type", f"{metrics.get('chain_length', 0)}-Hop Chain")
-            with col2:
-                st.metric("Chain Latency", f"{metrics.get('chain_latency', 0)}ms")
-            with col3:
-                st.metric("Anonymization", f"{metrics.get('anonymization_level', 0)}%")
-            with col4:
-                st.metric("Efficiency", f"{metrics.get('chain_efficiency', 0)}%")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Status", "Connected", delta="Active")
+        with col2:
+            st.metric("Latency", f"{st.session_state.proxy_metrics.get('latency', 0)}ms")
+        with col3:
+            st.metric("Speed Est.", f"{st.session_state.proxy_metrics.get('speed', 0):.1f} Mbps")
+        with col4:
+            duration = datetime.now() - st.session_state.connection_start_time if st.session_state.connection_start_time else timedelta(0)
+            st.metric("Session", str(duration).split('.')[0])
 
-        # Chain Analysis (only for chain mode)
-        if st.session_state.connection_mode == "chain" and st.session_state.chain_locations:
+        # Location Analysis
+        if st.session_state.user_location and st.session_state.proxy_location:
             st.markdown("---")
-            st.markdown("### ⛓️ Chain Analysis")
+            st.markdown("### Location Analysis")
             
-            chain_data = st.session_state.chain_locations
-            diversity = chain_data.get('geographic_diversity', {})
+            col1, col2 = st.columns(2)
             
-            col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Countries", diversity.get('unique_countries', 0))
-            with col2:
-                st.metric("ISPs", diversity.get('unique_isps', 0))
-            with col3:
-                st.metric("Diversity Score", f"{diversity.get('diversity_score', 0)}%")
-            
-            # Individual hop analysis
-            st.markdown("#### Hop Analysis")
-            for hop_data in chain_data['chain_path']:
-                loc = hop_data['location']
-                if loc:
-                    st.markdown(f"""
-                    <div class="chain-hop">
-                        <strong>Hop {hop_data['hop']}: {hop_data['proxy']}</strong><br>
-                        📍 {loc.get('city', 'Unknown')}, {loc.get('country', 'Unknown')}<br>
-                        🏢 {loc.get('isp', 'Unknown')}<br>
-                        🕐 {loc.get('timezone', 'Unknown')}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-        # Location comparison (single mode) or Chain visualization (chain mode)
-        if st.session_state.user_location:
-            st.markdown("---")
-            
-            if st.session_state.connection_mode == "single" and st.session_state.proxy_location:
-                st.markdown("### 🌍 Location Comparison")
                 user_loc = st.session_state.user_location
-                proxy_loc = st.session_state.proxy_location
-                
-                if (user_loc.get('lat') and user_loc.get('lon') and 
-                    proxy_loc.get('lat') and proxy_loc.get('lon')):
-                    distance = calculate_distance(
-                        float(user_loc['lat']), float(user_loc['lon']),
-                        float(proxy_loc['lat']), float(proxy_loc['lon'])
-                    )
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("Distance", f"{distance:.0f} km")
-                    with col2:
-                        user_tz = user_loc.get('timezone', 'Unknown')
-                        proxy_tz = proxy_loc.get('timezone', 'Unknown')
-                        tz_match = "Same" if user_tz == proxy_tz else "Different"
-                        st.metric("Timezone", tz_match)
-                    with col3:
-                        st.metric("Anonymization", "Basic")
-                
-                # Side-by-side location comparison
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("#### 🏠 Your Real Location")
-                    st.markdown(f"""
-                    <div class="location-card">
-                        📍 <strong>{user_loc.get('city', 'Unknown')}, {user_loc.get('region', 'Unknown')}</strong><br>
-                        🏳️ {user_loc.get('country', 'Unknown')}<br>
-                        🌐 IP: {user_loc.get('ip', 'Unknown')}<br>
-                        🏢 ISP: {user_loc.get('isp', 'Unknown')}<br>
-                        🕐 Timezone: {user_loc.get('timezone', 'Unknown')}
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                with col2:
-                    st.markdown("#### 🎯 Proxy Location")
-                    st.markdown(f"""
-                    <div class="location-card">
-                        📍 <strong>{proxy_loc.get('city', 'Unknown')}, {proxy_loc.get('region', 'Unknown')}</strong><br>
-                        🏳️ {proxy_loc.get('country', 'Unknown')}<br>
-                        🌐 IP: {proxy_loc.get('ip', 'Unknown')}<br>
-                        🏢 ISP: {proxy_loc.get('isp', 'Unknown')}<br>
-                        🕐 Timezone: {proxy_loc.get('timezone', 'Unknown')}
-                    </div>
-                    """, unsafe_allow_html=True)
+                st.markdown(f"""
+                <div class="location-card">
+                    <div class="location-header">Your Real Location</div>
+                    <div class="location-detail"><strong>City:</strong> {user_loc.get('city', 'Unknown')}</div>
+                    <div class="location-detail"><strong>Region:</strong> {user_loc.get('region', 'Unknown')}</div>
+                    <div class="location-detail"><strong>Country:</strong> {user_loc.get('country', 'Unknown')}</div>
+                    <div class="location-detail"><strong>ISP:</strong> {user_loc.get('isp', 'Unknown')}</div>
+                    <div class="location-detail"><strong>Timezone:</strong> {user_loc.get('timezone', 'Unknown')}</div>
+                </div>
+                """, unsafe_allow_html=True)
             
-            elif st.session_state.connection_mode == "chain" and st.session_state.chain_locations:
-                st.markdown("### ⛓️ Chain Visualization")
-                
-                # Chain path map
-                fig_map = create_chain_map()
-                st.plotly_chart(fig_map, use_container_width=True, config={'displayModeBar': False})
+            with col2:
+                proxy_loc = st.session_state.proxy_location
+                st.markdown(f"""
+                <div class="location-card">
+                    <div class="location-header">Proxy Server Location</div>
+                    <div class="location-detail"><strong>City:</strong> {proxy_loc.get('city', 'Unknown')}</div>
+                    <div class="location-detail"><strong>Region:</strong> {proxy_loc.get('region', 'Unknown')}</div>
+                    <div class="location-detail"><strong>Country:</strong> {proxy_loc.get('country', 'Unknown')}</div>
+                    <div class="location-detail"><strong>ISP:</strong> {proxy_loc.get('isp', 'Unknown')}</div>
+                    <div class="location-detail"><strong>Timezone:</strong> {proxy_loc.get('timezone', 'Unknown')}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-        # Protocol testing (works for both single and chain)
+            # Distance calculation
+            if (user_loc.get('lat') and user_loc.get('lon') and 
+                proxy_loc.get('lat') and proxy_loc.get('lon')):
+                distance = calculate_distance(
+                    float(user_loc['lat']), float(user_loc['lon']),
+                    float(proxy_loc['lat']), float(proxy_loc['lon'])
+                )
+                
+                col_dist1, col_dist2, col_dist3 = st.columns(3)
+                with col_dist1:
+                    st.metric("Distance", f"{distance:.0f} km")
+                with col_dist2:
+                    user_tz = user_loc.get('timezone', 'Unknown')
+                    proxy_tz = proxy_loc.get('timezone', 'Unknown')
+                    tz_status = "Same" if user_tz == proxy_tz else "Different"
+                    st.metric("Timezone", tz_status)
+                with col_dist3:
+                    st.metric("Connection Type", "Proxy Tunnel")
+
+        # Network Map and Capabilities
         st.markdown("---")
-        st.markdown("### 🔎 Connection Testing")
+        col1, col2 = st.columns([2, 1])
         
-        # Show capabilities
-        if st.session_state.connection_mode == "single" and st.session_state.active_proxy:
-            caps = detect_proxy_capabilities(st.session_state.active_proxy)
-            http_badge = "🟢 HTTP OK" if caps["http_ok"] else "🔴 HTTP FAIL"
-            https_badge = "🟢 HTTPS OK" if caps["https_ok"] else "🔴 HTTPS TUNNEL FAIL"
-            st.caption(f"{http_badge} • {https_badge}")
-        elif st.session_state.connection_mode == "chain" and st.session_state.chain_connected:
-            metrics = st.session_state.chain_metrics
-            st.caption(f"⛓️ {metrics.get('chain_length', 0)}-hop chain • Exit IP: {metrics.get('exit_ip', 'Unknown')}")
+        with col1:
+            st.markdown("### Network Topology")
+            fig_map = create_professional_map()
+            st.plotly_chart(fig_map, use_container_width=True, config={'displayModeBar': False})
+            
+        with col2:
+            st.markdown("### Protocol Support")
+            metrics = st.session_state.proxy_metrics
+            
+            http_status = "✅ Supported" if metrics.get('http_ok', False) else "❌ Failed"
+            https_status = "✅ Supported" if metrics.get('https_ok', False) else "❌ Failed"
+            
+            st.markdown(f"""
+            <div class="status-card">
+                <div style="margin-bottom: 12px;"><strong>HTTP:</strong> {http_status}</div>
+                <div style="margin-bottom: 12px;"><strong>HTTPS Tunneling:</strong> {https_status}</div>
+                <div><strong>External IP:</strong> {metrics.get('ip_detected', 'Unknown')}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Testing Interface
+        st.markdown("---")
+        st.markdown("### Connection Testing")
         
-        urls = st.text_area("Enter URLs to test (one per line):",
-                            value="https://httpbin.org/ip\nhttp://example.com\nhttp://www.google.com", height=100)
+        urls = st.text_area(
+            "Test URLs (one per line):",
+            value="https://httpbin.org/ip\nhttp://example.com\nhttps://www.google.com",
+            height=100
+        )
         
-        if st.button("🌐 Test Browse", use_container_width=True):
+        if st.button("Run Tests", type="primary"):
             targets = [u.strip() for u in urls.splitlines() if u.strip()]
             if targets:
-                progress_bar = st.progress(0)
-                
-                for i, url in enumerate(targets):
-                    progress_bar.progress((i + 1) / len(targets))
-                    
-                    st.markdown(f"**Testing:** {url}")
-                    with st.spinner("Fetching via connection..."):
-                        try:
-                            # Use appropriate proxy configuration
-                            if st.session_state.connection_mode == "single":
+                for url in targets:
+                    with st.expander(f"Testing: {url}", expanded=True):
+                        with st.spinner("Connecting..."):
+                            try:
                                 proxy_http = st.session_state.active_proxy
-                                connection_info = "single proxy"
-                            else:
-                                # For chains, use first proxy as entry point
-                                proxy_http = normalize_proxy_http(st.session_state.proxy_chain[0])
-                                connection_info = f"{len(st.session_state.proxy_chain)}-hop chain"
-                            
-                            proxies = {"http": proxy_http, "https": proxy_http}
-                            headers = {
-                                "User-Agent": "ProxyStream/3.0 Chain Testing",
-                                "Accept": "text/html,application/json,*/*;q=0.8",
-                                "Accept-Language": "en-US,en;q=0.9",
-                                "Accept-Encoding": "gzip, deflate",
-                                "Connection": "keep-alive"
-                            }
-                            
-                            start_time = time.perf_counter()
-                            response = requests.get(url, 
-                                                  proxies=proxies, 
-                                                  headers=headers, 
-                                                  timeout=20,
-                                                  allow_redirects=True,
-                                                  stream=False)
-                            elapsed = (time.perf_counter() - start_time) * 1000
-                            
-                            if response.ok:
-                                # Show success with connection details
-                                status_msg = f"✅ Success - HTTP {response.status_code} ({elapsed:.0f}ms via {connection_info})"
+                                proxies = {"http": proxy_http, "https": proxy_http}
+                                headers = {"User-Agent": "ProxyStream/3.0 Professional"}
                                 
-                                if st.session_state.connection_mode == "chain":
-                                    exit_ip = st.session_state.chain_metrics.get('exit_ip', 'Unknown')
-                                    if exit_ip != 'Unknown':
-                                        status_msg += f" • Exit IP: {exit_ip}"
+                                start_time = time.perf_counter()
+                                response = requests.get(url, proxies=proxies, headers=headers, timeout=12)
+                                elapsed = (time.perf_counter() - start_time) * 1000
                                 
-                                st.success(status_msg)
-                                
-                                # Show response details
-                                content_type = response.headers.get('content-type', '').lower()
-                                content_length = len(response.content)
-                                
-                                # Create expandable content section
-                                with st.expander(f"Response Details ({content_length} bytes)", expanded=False):
+                                if response.ok:
+                                    st.markdown(f"""
+                                    <div class="success-box">
+                                        <strong>Success:</strong> HTTP {response.status_code} ({elapsed:.0f}ms)
+                                    </div>
+                                    """, unsafe_allow_html=True)
                                     
-                                    # Show response headers
-                                    st.markdown("**Response Headers:**")
-                                    header_data = dict(response.headers)
-                                    st.json(header_data)
-                                    
-                                    # Show content based on type
+                                    content_type = response.headers.get('content-type', '').lower()
                                     if 'json' in content_type:
-                                        st.markdown("**JSON Response:**")
                                         try:
-                                            json_data = response.json()
-                                            st.json(json_data)
-                                            
-                                            # Special handling for httpbin.org/ip
-                                            if 'httpbin.org/ip' in url and 'origin' in json_data:
-                                                st.info(f"🌐 Detected external IP: {json_data['origin']}")
+                                            st.json(response.json())
                                         except:
-                                            st.code(response.text[:1000])
-                                    
-                                    elif 'html' in content_type:
-                                        st.markdown("**HTML Preview:**")
-                                        # Extract title if available
-                                        import re
-                                        title_match = re.search(r'<title[^>]*>([^<]+)</title>', response.text, re.IGNORECASE)
-                                        if title_match:
-                                            st.info(f"📄 Page Title: {title_match.group(1).strip()}")
-                                        
-                                        st.code(response.text[:1000], language='html')
-                                        
-                                        if len(response.text) > 1000:
-                                            st.caption(f"... (showing first 1000 of {len(response.text)} characters)")
-                                    
-                                    elif 'text/' in content_type:
-                                        st.markdown("**Text Response:**")
-                                        st.code(response.text[:1000])
-                                        if len(response.text) > 1000:
-                                            st.caption(f"... (showing first 1000 of {len(response.text)} characters)")
-                                    
+                                            st.code(response.text[:500])
                                     else:
-                                        st.markdown("**Binary/Other Content:**")
-                                        st.info(f"Content-Type: {response.headers.get('content-type', 'Unknown')}")
-                                        st.info(f"Size: {content_length:,} bytes")
-                                        
-                                        # Offer download for binary content
-                                        if content_length < 10000000:  # < 10MB
-                                            filename = url.split('/')[-1] or 'download'
-                                            st.download_button(
-                                                "Download Content",
-                                                data=response.content,
-                                                file_name=filename,
-                                                mime=response.headers.get('content-type', 'application/octet-stream')
-                                            )
-                            
-                            elif response.status_code == 403:
-                                st.warning(f"⚠️ Access Forbidden - HTTP {response.status_code}")
-                                st.caption("Target website may be blocking proxy connections")
-                            
-                            elif response.status_code == 404:
-                                st.warning(f"⚠️ Not Found - HTTP {response.status_code}")
-                                st.caption("URL may not exist or be accessible")
-                            
-                            elif response.status_code >= 500:
-                                st.error(f"❌ Server Error - HTTP {response.status_code}")
-                                st.caption("Target server is experiencing issues")
-                            
-                            else:
-                                st.error(f"❌ Request Failed - HTTP {response.status_code}")
-                                if response.text:
-                                    st.code(response.text[:300])
-                                
-                        except requests.exceptions.ProxyError as e:
-                            st.error(f"❌ Proxy Error: Connection refused")
-                            st.caption(f"The proxy server rejected the connection: {str(e)[:100]}")
-                        
-                        except requests.exceptions.ConnectTimeout:
-                            st.error(f"❌ Connection Timeout")
-                            st.caption(f"Connection via {connection_info} timed out")
-                        
-                        except requests.exceptions.ReadTimeout:
-                            st.error(f"❌ Read Timeout") 
-                            st.caption("Server took too long to respond")
-                        
-                        except requests.exceptions.SSLError as e:
-                            st.error(f"❌ SSL/TLS Error")
-                            st.caption("SSL certificate verification failed or HTTPS not supported")
-                        
-                        except requests.exceptions.ConnectionError as e:
-                            st.error(f"❌ Connection Error")
-                            st.caption(f"Network connection failed: {str(e)[:100]}")
-                        
-                        except Exception as e:
-                            st.error(f"❌ Unexpected Error: {type(e).__name__}")
-                            st.caption(f"Details: {str(e)[:100]}")
-                    
-                    if i < len(targets) - 1:
-                        st.markdown("---")
-                
-                progress_bar.empty()
-                st.success(f"✅ Completed testing {len(targets)} URLs via {connection_info}")
-            else:
-                st.warning("Please enter at least one URL to test")
+                                        st.code(response.text[:500])
+                                else:
+                                    st.markdown(f"""
+                                    <div class="error-box">
+                                        <strong>Failed:</strong> HTTP {response.status_code}
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                    
+                            except Exception as e:
+                                st.markdown(f"""
+                                <div class="error-box">
+                                    <strong>Request Failed:</strong> {str(e)}
+                                </div>
+                                """, unsafe_allow_html=True)
 
     else:
-        # Disconnected state
-        st.markdown("### 🔌 Not Connected")
+        # Disconnected State
+        st.markdown("### Network Dashboard")
         
         if st.session_state.user_location:
             user_loc = st.session_state.user_location
-            st.info(f"Your location: {user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')} - Select connection mode and proxy servers from sidebar")
+            st.markdown(f"""
+            <div class="info-box">
+                Your location: <strong>{user_loc.get('city', 'Unknown')}, {user_loc.get('country', 'Unknown')}</strong> 
+                — Select a proxy server from the sidebar to begin network analysis.
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.info("Detect your location from the sidebar, then choose single proxy or chain mode for testing")
-        
-        proxy_data = parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0])
-        
-        # Show current chain if any
-        if st.session_state.proxy_chain:
-            st.markdown("### ⛓️ Current Chain Configuration")
-            for i, proxy in enumerate(st.session_state.proxy_chain):
-                host = proxy.split(':')[0]
-                country = IP_TO_COUNTRY.get(host, 'US')
-                st.markdown(f"**Hop {i+1}:** {get_country_flag(country)} {proxy}")
-                if i < len(st.session_state.proxy_chain) - 1:
-                    st.markdown('<div class="chain-arrow">↓</div>', unsafe_allow_html=True)
-            
-            if len(st.session_state.proxy_chain) >= 2:
-                if st.button("🧪 Test Current Chain", type="primary"):
-                    with st.spinner("Testing chain..."):
-                        success, metrics = test_proxy_chain(st.session_state.proxy_chain)
-                        if success:
-                            st.session_state.chain_connected = True
-                            st.session_state.chain_metrics = metrics
-                            st.session_state.chain_locations = get_chain_geolocation(st.session_state.proxy_chain)
-                            st.success("Chain connected!")
-                            st.rerun()
-                        else:
-                            st.error(f"Chain failed: {metrics.get('error')}")
+            st.markdown("""
+            <div class="info-box">
+                Click "Detect Location" in the sidebar to identify your network location, then select a proxy server for testing.
+            </div>
+            """, unsafe_allow_html=True)
         
         # Network overview
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.markdown("### 🌐 Available Proxy Network")
+        proxy_data = parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0])
+        
+        if proxy_data:
+            st.markdown("### Available Network Infrastructure")
             countries = list(proxy_data.keys())
             server_counts = [len(proxy_data[c]) for c in countries]
             
-            fig_network = px.bar(x=countries, y=server_counts, title="Servers by Country",
-                               color=server_counts, color_continuous_scale="Viridis")
-            fig_network.update_layout(
-                plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                font_color='white', height=300, showlegend=False
+            # Create professional bar chart
+            fig = px.bar(
+                x=countries, y=server_counts, 
+                title="Proxy Servers by Country",
+                color=server_counts,
+                color_continuous_scale=["#e2e8f0", "#2563eb"]
             )
-            st.plotly_chart(fig_network, use_container_width=True, config={'displayModeBar': False})
+            fig.update_layout(
+                plot_bgcolor='#f8fafc',
+                paper_bgcolor='#f8fafc',
+                font_color='#1e293b',
+                title_font_size=16,
+                height=300,
+                showlegend=False,
+                xaxis_title="Country",
+                yaxis_title="Available Servers"
+            )
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # Footer
+    # Professional Footer
     total_proxies = sum(len(v) for v in parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]).values())
     st.markdown("---")
     st.markdown(f"""
-    <div style="text-align: center; color: #6b7280; font-size: 14px;">
-        <p><strong>ProxyStream Premium v3.0</strong> - Advanced Proxy Testing & Chain Analysis</p>
-        <p>🧪 Real Testing • ⛓️ Proxy Chains • 🗺️ Location Analysis • 🌍 Global Network</p>
-        <p>Network: <strong>{total_proxies:,}</strong> servers across <strong>{len(parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]))}</strong> countries</p>
-        <p style="font-size: 12px; color: #6b7280;">Educational and testing purposes only. Use reputable VPN services for actual privacy.</p>
+    <div style="text-align: center; color: #64748b; font-size: 14px; padding: 24px 0;">
+        <p><strong>ProxyStream Professional v3.0</strong></p>
+        <p>Network Testing • Location Analysis • Security Assessment</p>
+        <p>Active Network: <strong>{total_proxies:,}</strong> servers across <strong>{len(parse_proxy_list(load_proxy_list(st.session_state.force_reload_key)[0]))}</strong> countries</p>
+        <p style="font-size: 12px; margin-top: 12px;">For educational and network analysis purposes only</p>
     </div>
     """, unsafe_allow_html=True)
 
