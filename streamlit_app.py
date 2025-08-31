@@ -41,7 +41,7 @@ except Exception:
     pyasn = None
 
 # Prometheus metrics
-from prometheus_client import start_http_server, Counter, Histogram
+from prometheus_client import start_http_server, Counter, Histogram, REGISTRY
 
 # ---------------------------------------------------
 # Page & Constants
@@ -87,18 +87,28 @@ PYASN_DB = os.getenv("PROXYSTREAM_PYASN_DB", "ipasn.dat")
 pyasn_obj = pyasn.pyasn(PYASN_DB) if (pyasn and pathlib.Path(PYASN_DB).exists()) else None
 
 # ---------------------------------------------------
-# Prometheus metrics (export on separate port)
+# Prometheus metrics (handle Streamlit reloads)
 # ---------------------------------------------------
+# Use try-except to handle re-registration on Streamlit reload
+try:
+    METRIC_FETCH_OK = Counter("proxystream_fetch_success_total", "Successful fetches")
+    METRIC_FETCH_ERR = Counter("proxystream_fetch_errors_total", "Errored fetches")
+    METRIC_CHAIN_TEST = Histogram("proxystream_chain_total_ms", "Total chain test time (ms)")
+    METRIC_HOP_MS = Histogram("proxystream_hop_ms", "Per-hop handshake time (ms)")
+    METRIC_RATE_LIMIT_BLOCK = Counter("proxystream_rate_limit_block_total", "Rate limited blocks")
+except ValueError:
+    # Metrics already registered, get them from the registry
+    METRIC_FETCH_OK = REGISTRY._names_to_collectors["proxystream_fetch_success_total"]
+    METRIC_FETCH_ERR = REGISTRY._names_to_collectors["proxystream_fetch_errors_total"]
+    METRIC_CHAIN_TEST = REGISTRY._names_to_collectors["proxystream_chain_total_ms"]
+    METRIC_HOP_MS = REGISTRY._names_to_collectors["proxystream_hop_ms"]
+    METRIC_RATE_LIMIT_BLOCK = REGISTRY._names_to_collectors["proxystream_rate_limit_block_total"]
+
+# Try to start metrics server
 try:
     start_http_server(int(os.getenv("PROXYSTREAM_METRICS_PORT", "9108")))
 except Exception:
-    pass  # if already running or port in use
-
-METRIC_FETCH_OK = Counter("proxystream_fetch_success_total", "Successful fetches")
-METRIC_FETCH_ERR = Counter("proxystream_fetch_errors_total", "Errored fetches")
-METRIC_CHAIN_TEST = Histogram("proxystream_chain_total_ms", "Total chain test time (ms)")
-METRIC_HOP_MS = Histogram("proxystream_hop_ms", "Per-hop handshake time (ms)")
-METRIC_RATE_LIMIT_BLOCK = Counter("proxystream_rate_limit_block_total", "Rate limited blocks")
+    pass  # Server already running or port in use
 
 # ---------------------------------------------------
 # Simple TTL cache (in-memory)
