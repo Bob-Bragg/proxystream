@@ -476,27 +476,153 @@ def _is_ip(s: str) -> bool:
 # ---------------------------------------------------
 # Validation for single proxy
 # ---------------------------------------------------
-async def validate_proxy(proxy: ProxyInfo, timeout: int = 10) -> Tuple[bool, float, Optional[str]]:
+async def validate_proxy(proxy: ProxyInfo, timeout: int = 15) -> Tuple[bool, float, Optional[str]]:
     """
-    Validate a single HTTP proxy via httpx proxies param (socks not supported here).
+    Validate a single HTTP proxy via httpx proxies param.
     Returns: (is_valid, latency_ms, exit_ip)
     """
     if not rate_limiter.allow(f"validate:{proxy.host}:{proxy.port}"):
         return False, 0.0, None
 
+    # Try multiple test endpoints in case one is down or blocking
+    test_endpoints = [
+        "http://httpbin.org/ip",
+        "http://icanhazip.com",
+        "http://api.ipify.org",
+        "http://checkip.amazonaws.com",
+        "http://wtfismyip.com/text"
+    ]
+    
     proxy_url = proxy.as_url()
-    try:
-        start = time.perf_counter_ns()
-        async with httpx.AsyncClient(proxies=proxy_url, timeout=timeout) as client:
-            r = await client.get("http://httpbin.org/ip")
-            if r.status_code == 200:
-                latency_ms = (time.perf_counter_ns() - start) / 1_000_000
-                data = r.json()
-                exit_ip = data.get("origin", "").split(",")[0].strip()
-                return True, latency_ms, exit_ip
-    except Exception:
-        pass
+    
+    for endpoint in test_endpoints:
+        try:
+            start = time.perf_counter_ns()
+            async with httpx.AsyncClient(
+                proxies={"http://": proxy_url, "https://": proxy_url},
+                timeout=httpx.Timeout(timeout, connect=timeout),
+                verify=False,  # Skip SSL verification for proxy testing
+                follow_redirects=True
+            ) as client:
+                r = await client.get(endpoint)
+                if r.status_code == 200:
+                    latency_ms = (time.perf_counter_ns() - start) / 1_000_000
+                    
+                    # Extract IP from response
+                    exit_ip = None
+                    if "httpbin" in endpoint:
+                        try:
+                            data = r.json()
+                            exit_ip = data.get("origin", "").split(",")[0].strip()
+                        except:
+                            exit_ip = r.text.strip()
+                    else:
+                        exit_ip = r.text.strip().split('\n')[0]
+                    
+                    # Basic IP validation
+                    if exit_ip and _is_ip(exit_ip.split(':')[0]):  # Handle "IP:PORT" format
+                        return True, latency_ms, exit_ip.split(':')[0]
+                    elif exit_ip:  # At least we got a response
+                        return True, latency_ms, proxy.host  # Use proxy IP as fallback
+                        
+        except httpx.ProxyError:
+            # Proxy connection failed - try next endpoint
+            continue
+        except httpx.TimeoutException:
+            # Timeout - try next endpoint with longer timeout
+            continue
+        except Exception as e:
+            # Other error - log and continue
+            print(f"Validation error for {proxy.host}:{proxy.port} on {endpoint}: {str(e)[:50]}")
+            continue
+    
     return False, 0.0, None
+
+# Also update the load_and_validate_batch function to be more lenient (around line 650-700):
+async def load_and_validate_batch(proxies: List[ProxyInfo], max_concurrent: int = 10) -> List[ProxyInfo]:
+    """Validate proxies with lower concurrency to avoid overwhelming"""
+    validated: List[ProxyInfo] = []
+    sem = asyncio.Semaphore(max_concurrent)  # Reduced from 20
+    circ = Circuit(threshold=10, cooldown_seconds=60)  # Increased threshold
+
+    async def one(proxy: ProxyInfo):
+        async with sem:
+            if not circ.can_attempt():
+                await asyncio.sleep(1)  # Brief pause if circuit is open
+                if not circ.can_attempt():
+                    return None
+            try:
+                # Single attempt with longer timeout
+                ok, lat_ms, exit_ip = await validate_proxy(proxy, timeout=20)
+                if ok:
+                    proxy.is_valid = True
+                    proxy.latency = lat_ms
+                    proxy.last_tested = datetime.now()
+
+                    # Try to get geo, but don't fail if we can't
+                    try:
+                        cached = _cache_get_ip(proxy.host)
+                        if cached:
+                            geo = cached
+                        else:
+                            geo = await get_proxy_geo_with_asn(proxy.host)
+                            _cache_set_ip(proxy.host, geo, "dc")
+                        
+                        proxy.country = geo.get('country')
+                        proxy.country_code = geo.get('country_code')
+                        proxy.city = geo.get('city')
+                        proxy.region = geo.get('region')
+                        proxy.lat = geo.get('lat')
+                        proxy.lon = geo.get('lon')
+                        proxy.asn = geo.get('asn')
+                        proxy.org = geo.get('org')
+                        proxy.isp = geo.get('isp')
+                    except:
+                        # Geo lookup failed, but proxy is still valid
+                        pass
+                    
+                    circ.record_success()
+                    return proxy
+                else:
+                    circ.record_failure()
+                    return None
+            except Exception as e:
+                print(f"Validation exception for {proxy.host}: {str(e)[:50]}")
+                circ.record_failure()
+                return None
+
+    # Process in smaller batches to avoid overwhelming
+    batch_size = 10
+    for i in range(0, len(proxies), batch_size):
+        batch = proxies[i:i+batch_size]
+        results = await asyncio.gather(*(one(p) for p in batch), return_exceptions=True)
+        for r in results:
+            if r and not isinstance(r, Exception):
+                validated.append(r)
+        
+        # Brief pause between batches
+        if i + batch_size < len(proxies):
+            await asyncio.sleep(0.5)
+
+    # Save to database if we got any valid proxies
+    if validated:
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute("BEGIN")
+        for p in validated:
+            cur.execute("""
+                INSERT OR REPLACE INTO proxies
+                (host, port, protocol, username, password, latency, last_tested,
+                 country, country_code, city, region, lat, lon, asn, org, isp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                p.host, p.port, p.protocol, p.username, p.password, p.latency, p.last_tested,
+                p.country, p.country_code, p.city, p.region, p.lat, p.lon, p.asn, p.org, p.isp
+            ))
+        conn.commit()
+        conn.close()
+    
+    return validated
 
 # ---------------------------------------------------
 # Proxy list parsing (IPv4 + IPv6)
