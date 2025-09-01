@@ -410,7 +410,15 @@ def fetch_proxies_cached(url: str, limit: int = 1000) -> List[Dict]:
                 for line in lines:
                     proxy = parse_proxy_line(line, strict=False)
                     if proxy:
-                        proxies.append(proxy.to_dict())
+                        # Convert to simple dictionary with string protocol
+                        proxy_dict = {
+                            "host": proxy.host,
+                            "port": proxy.port,
+                            "protocol": proxy.protocol.value if isinstance(proxy.protocol, ProxyProtocol) else str(proxy.protocol),
+                            "username": proxy.username,
+                            "password": proxy.password
+                        }
+                        proxies.append(proxy_dict)
     
     except httpx.TimeoutException:
         logger.warning(f"Timeout fetching {url}")
@@ -418,6 +426,28 @@ def fetch_proxies_cached(url: str, limit: int = 1000) -> List[Dict]:
         logger.error(f"Error fetching {url}: {e}")
     
     return proxies
+
+# Helper function to safely create Proxy from dict
+def create_proxy_from_dict(data: Dict) -> Optional[Proxy]:
+    """Safely create a Proxy object from a dictionary"""
+    try:
+        # Ensure required fields exist
+        if not data.get('host') or not data.get('port'):
+            return None
+        
+        # Clean the data
+        cleaned_data = {
+            'host': str(data['host']),
+            'port': int(data['port']),
+            'protocol': str(data.get('protocol', 'http')).lower(),
+            'username': data.get('username'),
+            'password': data.get('password')
+        }
+        
+        return Proxy(**cleaned_data)
+    except Exception as e:
+        logger.debug(f"Failed to create proxy from dict: {e}")
+        return None
 
 # ---------------------------------------------------
 # Secure GitHub Gist Integration
@@ -1036,12 +1066,9 @@ with st.sidebar:
                 proxy_dicts = fetch_proxies_cached(url, limit=500)
                 # Safely convert dictionaries to Proxy objects
                 for pd in proxy_dicts:
-                    try:
-                        proxy = Proxy(**pd)
+                    proxy = create_proxy_from_dict(pd)
+                    if proxy:
                         all_proxies.append(proxy)
-                    except Exception as e:
-                        logger.debug(f"Failed to create proxy from dict: {e}")
-                        continue
                 progress.progress((i + 1) / len(sources))
             
             # Deduplicate
@@ -1117,19 +1144,27 @@ with tab2:
         with st.spinner("Importing..."):
             proxy_dicts = fetch_proxies_cached(url_input, limit=1000)
             if proxy_dicts:
-                proxies = [Proxy(**pd) for pd in proxy_dicts]
-                st.info(f"Found {len(proxies)} proxies, validating...")
+                proxies = []
+                for pd in proxy_dicts:
+                    proxy = create_proxy_from_dict(pd)
+                    if proxy:
+                        proxies.append(proxy)
                 
-                valid = run_async_validation(
-                    proxies,
-                    max_concurrent=st.session_state.settings["max_concurrent"],
-                    verify_ssl=st.session_state.settings["verify_ssl"]
-                )
-                
-                for proxy in valid:
-                    session_manager.add_validated_proxy(proxy)
-                
-                st.success(f"Added {len(valid)} working proxies!")
+                if proxies:
+                    st.info(f"Found {len(proxies)} proxies, validating...")
+                    
+                    valid = run_async_validation(
+                        proxies,
+                        max_concurrent=st.session_state.settings["max_concurrent"],
+                        verify_ssl=st.session_state.settings["verify_ssl"]
+                    )
+                    
+                    for proxy in valid:
+                        session_manager.add_validated_proxy(proxy)
+                    
+                    st.success(f"Added {len(valid)} working proxies!")
+                else:
+                    st.warning("No valid proxies found in the URL")
 
 with tab3:
     st.subheader("📊 Analytics Dashboard")
