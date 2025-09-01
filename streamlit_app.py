@@ -737,87 +737,223 @@ def render_proxy_table():
 # Logo and Branding
 # ---------------------------------------------------
 def render_logo():
-    """Render the ProxyStream logo from GitHub"""
-    # Using the logo directly from GitHub repository
+    """Render the ProxyStream logo from GitHub with proper styling"""
     logo_url = "https://raw.githubusercontent.com/Bob-Bragg/proxystream/main/ProxyStream%20Logo%20Design.png"
     
-    # Method 1: Direct URL reference (simpler, requires internet)
     logo_html = f"""
-    <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 2rem; padding: 20px;">
-        <img src="{logo_url}" style="max-width: 400px; height: auto;">
-    </div>
-    """
+    <style>
+        .main-header {{
+            padding: 1rem 0 2rem 0;
+            border-bottom: 2px solid #1f2937;
+            margin-bottom: 2rem;
+        }}
+        .logo-container {{
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+        }}
+        .logo-img {{
+            max-width: 280px;
+            height: auto;
+            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
+        }}
+        .tagline {{
+            text-align: center;
+            color: #6b7280;
+            font-size: 1rem;
+            font-weight: 400;
+            letter-spacing: 0.5px;
+        }}
+        .metrics-container {{
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }}
+        .metric-card {{
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }}
+        .metric-value {{
+            font-size: 2rem;
+            font-weight: 700;
+            color: #00A6FB;
+        }}
+        .metric-label {{
+            font-size: 0.875rem;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-top: 0.25rem;
+        }}
+    </style>
     
-    # Alternative Method 2: Cache and convert to base64 for offline use
-    # Uncomment the following to use cached base64 version:
-    """
-    try:
-        import requests
-        import base64
-        from io import BytesIO
-        
-        # Fetch and cache the logo
-        @st.cache_data(ttl=86400)  # Cache for 24 hours
-        def get_logo_base64():
-            response = requests.get(logo_url)
-            if response.status_code == 200:
-                return base64.b64encode(response.content).decode('utf-8')
-            return None
-        
-        logo_base64 = get_logo_base64()
-        
-        if logo_base64:
-            logo_html = f'''
-            <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 2rem; padding: 20px;">
-                <img src="data:image/png;base64,{logo_base64}" style="max-width: 400px; height: auto;">
-            </div>
-            '''
-    except Exception as e:
-        # Fallback to URL method if base64 fails
-        pass
+    <div class="main-header">
+        <div class="logo-container">
+            <img src="{logo_url}" class="logo-img" alt="ProxyStream Logo">
+        </div>
+        <div class="tagline">Enterprise-grade proxy management with security and performance optimizations</div>
+    </div>
     """
     
     st.markdown(logo_html, unsafe_allow_html=True)
 
-# Helper function to download and save logo locally
-def download_logo_for_offline():
+# ---------------------------------------------------
+# Enhanced Stats Display
+# ---------------------------------------------------
+def render_stats_cards():
+    """Render statistics in styled cards"""
+    stats = st.session_state.stats
+    working = len([p for p in st.session_state.validated_proxies if p.is_valid])
+    success_rate = (stats['total_working'] / stats['total_validated'] * 100) if stats['total_validated'] > 0 else 0
+    
+    stats_html = f"""
+    <div class="metrics-container">
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
+            <div class="metric-card">
+                <div class="metric-value">{stats['total_fetched']:,}</div>
+                <div class="metric-label">Total Fetched</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{stats['total_validated']:,}</div>
+                <div class="metric-label">Total Validated</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{working:,}</div>
+                <div class="metric-label">Working Proxies</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-value">{'%.1f%%' % success_rate if stats['total_validated'] > 0 else 'N/A'}</div>
+                <div class="metric-label">Success Rate</div>
+            </div>
+        </div>
+    </div>
     """
-    Downloads the ProxyStream logo and saves it as base64 for offline use.
-    Run this once to get the base64 string for embedding.
-    """
-    import requests
-    import base64
     
-    logo_url = "https://raw.githubusercontent.com/Bob-Bragg/proxystream/main/ProxyStream%20Logo%20Design.png"
-    
-    try:
-        response = requests.get(logo_url)
-        if response.status_code == 200:
-            logo_base64 = base64.b64encode(response.content).decode('utf-8')
-            
-            # Save to file
-            with open("proxystream_logo_base64.txt", "w") as f:
-                f.write(logo_base64)
-            
-            print(f"Logo downloaded and encoded successfully!")
-            print(f"Base64 string length: {len(logo_base64)} characters")
-            print(f"Saved to: proxystream_logo_base64.txt")
-            
-            return logo_base64
-        else:
-            print(f"Failed to download logo: HTTP {response.status_code}")
-    except Exception as e:
-        print(f"Error downloading logo: {e}")
-    
-    return None
+    st.markdown(stats_html, unsafe_allow_html=True)
 
 # ---------------------------------------------------
 # Main Application
 # ---------------------------------------------------
+# Custom CSS for overall styling
+st.markdown("""
+<style>
+    /* Main container adjustments */
+    .block-container {
+        padding-top: 2rem;
+        max-width: 100%;
+    }
+    
+    /* Sidebar styling */
+    .css-1d391kg, [data-testid="stSidebar"] {
+        background-color: #1e1e1e;
+        border-right: 1px solid #2d2d2d;
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 166, 251, 0.3);
+    }
+    
+    /* Primary button special styling */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #00A6FB 0%, #0086D9 100%);
+        border: none;
+    }
+    
+    /* Tab styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background-color: rgba(30, 41, 59, 0.5);
+        padding: 4px;
+        border-radius: 12px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 8px 16px;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #00A6FB;
+    }
+    
+    /* Metric styling */
+    [data-testid="metric-container"] {
+        background: rgba(30, 41, 59, 0.5);
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        background: rgba(30, 41, 59, 0.5);
+        border-radius: 8px;
+        font-weight: 600;
+    }
+    
+    /* DataFrame styling */
+    .dataframe {
+        border: 1px solid #2d2d2d !important;
+        border-radius: 8px;
+    }
+    
+    /* Progress bar styling */
+    .stProgress > div > div > div {
+        background-color: #00A6FB;
+    }
+    
+    /* Success/Error/Warning messages */
+    .stAlert {
+        border-radius: 8px;
+        border-left: 4px solid;
+    }
+    
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: #1e1e1e;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: #4a4a4a;
+        border-radius: 5px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: #00A6FB;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # Display logo
 render_logo()
 
-st.caption("Enterprise-grade proxy management with security and performance optimizations")
+# Display stats cards instead of default metrics
+render_stats_cards()
 
 # Stats Dashboard
 render_stats()
