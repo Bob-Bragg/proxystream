@@ -142,7 +142,7 @@ class Proxy:
     """Proxy data model with validation"""
     host: str
     port: int
-    protocol: ProxyProtocol = ProxyProtocol.HTTP
+    protocol: Union[ProxyProtocol, str] = ProxyProtocol.HTTP
     username: Optional[str] = None
     password: Optional[str] = None
     latency: Optional[float] = None
@@ -161,12 +161,15 @@ class Proxy:
         if not self.host or len(self.host) > 255:
             raise ValueError(f"Invalid host: {self.host}")
         
-        # Convert protocol to enum if string
+        # Convert protocol string to enum if needed
         if isinstance(self.protocol, str):
             try:
                 self.protocol = ProxyProtocol(self.protocol.lower())
             except ValueError:
+                # Default to HTTP if unknown protocol
                 self.protocol = ProxyProtocol.HTTP
+        elif not isinstance(self.protocol, ProxyProtocol):
+            self.protocol = ProxyProtocol.HTTP
     
     def __hash__(self):
         return hash((self.host, self.port, self.protocol.value))
@@ -1031,8 +1034,14 @@ with st.sidebar:
             
             for i, url in enumerate(sources):
                 proxy_dicts = fetch_proxies_cached(url, limit=500)
-                proxies = [Proxy(**pd) for pd in proxy_dicts]
-                all_proxies.extend(proxies)
+                # Safely convert dictionaries to Proxy objects
+                for pd in proxy_dicts:
+                    try:
+                        proxy = Proxy(**pd)
+                        all_proxies.append(proxy)
+                    except Exception as e:
+                        logger.debug(f"Failed to create proxy from dict: {e}")
+                        continue
                 progress.progress((i + 1) / len(sources))
             
             # Deduplicate
