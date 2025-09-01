@@ -172,7 +172,12 @@ class Proxy:
             self.protocol = ProxyProtocol.HTTP
     
     def __hash__(self):
-        return hash((self.host, self.port, self.protocol.value))
+        # Handle both enum and string protocols
+        if isinstance(self.protocol, ProxyProtocol):
+            protocol_str = self.protocol.value
+        else:
+            protocol_str = str(self.protocol).lower()
+        return hash((self.host, self.port, protocol_str))
     
     def __eq__(self, other):
         if isinstance(other, Proxy):
@@ -183,7 +188,12 @@ class Proxy:
     def url(self) -> str:
         """Get proxy URL with auth if present"""
         auth = f"{self.username}:{self.password}@" if self.username else ""
-        return f"{self.protocol.value}://{auth}{self.host}:{self.port}"
+        # Handle both enum and string protocols
+        if isinstance(self.protocol, ProxyProtocol):
+            protocol_str = self.protocol.value
+        else:
+            protocol_str = str(self.protocol).lower()
+        return f"{protocol_str}://{auth}{self.host}:{self.port}"
     
     @property
     def reliability_score(self) -> float:
@@ -196,10 +206,16 @@ class Proxy:
     
     def to_dict(self) -> dict:
         """Convert to dictionary for export"""
+        # Handle both enum and string protocols
+        if isinstance(self.protocol, ProxyProtocol):
+            protocol_str = self.protocol.value
+        else:
+            protocol_str = str(self.protocol)
+            
         return {
             "host": self.host,
             "port": self.port,
-            "protocol": self.protocol.value,
+            "protocol": protocol_str,
             "latency": self.latency,
             "reliability": self.reliability_score,
             "url": self.url
@@ -710,8 +726,14 @@ def render_proxy_table():
     data = []
     for proxy in list(st.session_state.validated_proxies):
         if proxy.is_valid:
+            # Handle both enum and string protocols
+            if isinstance(proxy.protocol, ProxyProtocol):
+                protocol_str = proxy.protocol.value.upper()
+            else:
+                protocol_str = str(proxy.protocol).upper()
+                
             data.append({
-                'Protocol': proxy.protocol.value.upper(),
+                'Protocol': protocol_str,
                 'Host': proxy.host,
                 'Port': proxy.port,
                 'Latency': f"{proxy.latency:.0f}ms" if proxy.latency else "N/A",
@@ -1179,16 +1201,22 @@ with tab3:
                 # Protocol distribution
                 protocol_counts = defaultdict(int)
                 for p in working_proxies:
-                    protocol_counts[p.protocol.value.upper()] += 1
+                    # Handle both enum and string protocols
+                    if isinstance(p.protocol, ProxyProtocol):
+                        protocol_name = p.protocol.value.upper()
+                    else:
+                        protocol_name = str(p.protocol).upper()
+                    protocol_counts[protocol_name] += 1
                 
-                df_proto = pd.DataFrame(
-                    list(protocol_counts.items()),
-                    columns=["Protocol", "Count"]
-                )
-                fig = px.pie(df_proto, values="Count", names="Protocol", 
-                           title="Protocol Distribution",
-                           color_discrete_sequence=px.colors.qualitative.Set3)
-                st.plotly_chart(fig, use_container_width=True)
+                if protocol_counts:
+                    df_proto = pd.DataFrame(
+                        list(protocol_counts.items()),
+                        columns=["Protocol", "Count"]
+                    )
+                    fig = px.pie(df_proto, values="Count", names="Protocol", 
+                               title="Protocol Distribution",
+                               color_discrete_sequence=px.colors.qualitative.Set3)
+                    st.plotly_chart(fig, use_container_width=True)
             
             with col2:
                 # Latency distribution
@@ -1251,7 +1279,15 @@ with tab4:
         if st.session_state.validated_proxies:
             working_proxies = [p for p in st.session_state.validated_proxies if p.is_valid]
             if working_proxies:
-                proxy_options = [f"{p.protocol.value}://{p.host}:{p.port}" for p in working_proxies[:50]]
+                proxy_options = []
+                for p in working_proxies[:50]:
+                    # Handle both enum and string protocols
+                    if isinstance(p.protocol, ProxyProtocol):
+                        protocol_str = p.protocol.value
+                    else:
+                        protocol_str = str(p.protocol).lower()
+                    proxy_options.append(f"{protocol_str}://{p.host}:{p.port}")
+                    
                 selected_proxy_str = st.selectbox(
                     "Select Proxy to Test",
                     ["None (Direct Connection)"] + proxy_options
@@ -1383,8 +1419,15 @@ with tab4:
             # Prepare test parameters
             if selected_proxy_str != "None (Direct Connection)":
                 # Find the proxy object
+                test_proxy = None
                 for p in working_proxies:
-                    if f"{p.protocol.value}://{p.host}:{p.port}" == selected_proxy_str:
+                    # Handle both enum and string protocols
+                    if isinstance(p.protocol, ProxyProtocol):
+                        protocol_str = p.protocol.value
+                    else:
+                        protocol_str = str(p.protocol).lower()
+                    
+                    if f"{protocol_str}://{p.host}:{p.port}" == selected_proxy_str:
                         test_proxy = p
                         break
             else:
