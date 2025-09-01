@@ -647,12 +647,11 @@ with st.sidebar:
             
             # Validate all without limits
             progress_bar = st.progress(0)
-            validated_count = 0
+            progress_counter = {"count": 0}  # Use dict to avoid nonlocal issue
             
             def update_progress(count):
-                nonlocal validated_count
-                validated_count += count
-                progress_bar.progress(min(validated_count / len(unique_proxies), 1.0))
+                progress_counter["count"] += count
+                progress_bar.progress(min(progress_counter["count"] / len(unique_proxies), 1.0))
             
             with st.spinner(f"Validating {len(unique_proxies)} proxies..."):
                 if validation_mode == "Async (Fast)":
