@@ -1,6 +1,6 @@
 """
-ProxyStream Production-Ready Version
-All critical issues fixed, properly architected
+ProxyStream Complete - Streamlit Cloud Ready
+All functions included, uses cached geo database for ephemeral storage
 """
 
 import asyncio
@@ -12,8 +12,9 @@ import base64
 import os
 import struct
 import tarfile
-import shutil
+import tempfile
 import zipfile
+import io
 from typing import List, Dict, Any, Optional, Tuple, Callable
 from datetime import datetime, timedelta
 from dataclasses import dataclass
@@ -41,23 +42,17 @@ from aiohttp_socks import ChainProxyConnector
 # Configuration
 # ---------------------------------------------------
 st.set_page_config(
-    page_title="ProxyStream Production",
+    page_title="ProxyStream Cloud",
     page_icon="🔒",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Paths
-GEOLITE2_DIR = Path("geolite2_data")
-GEOLITE2_DB_PATH = GEOLITE2_DIR / "GeoLite2-City.mmdb"
-IP2LOCATION_DIR = Path("ip2location_data")
-IP2LOCATION_DB = IP2LOCATION_DIR / "IP2LOCATION-LITE-DB5.BIN"
-DB_PATH = "proxystream.db"
-
 # Sources
 PROXY_SOURCES = [
     "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
     "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
 ]
 
 VALIDATION_ENDPOINTS = [
@@ -72,6 +67,180 @@ DNS_RESOLVERS = [
     ("1.1.1.1", 53),         # Cloudflare
     ("8.8.8.8", 53),         # Google
 ]
+
+# ---------------------------------------------------
+# Streamlit Cloud Geo Database Setup
+# ---------------------------------------------------
+
+@st.cache_data(ttl=86400*7)  # Cache for 7 days
+def download_ip2location_cached() -> bytes:
+    """Download IP2Location LITE database and cache it"""
+    try:
+        url = "https://download.ip2location.com/lite/IP2LOCATION-LITE-DB5.BIN.ZIP"
+        
+        response = httpx.get(url, timeout=60, follow_redirects=True)
+        if response.status_code != 200:
+            return None
+        
+        # Extract BIN file from ZIP
+        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+            for name in z.namelist():
+                if name.endswith(".BIN"):
+                    return z.read(name)
+        
+        return None
+    except Exception as e:
+        st.error(f"IP2Location download error: {e}")
+        return None
+
+@st.cache_data(ttl=86400)  # Cache for 24 hours
+def download_geolite2_cached(license_key: str) -> bytes:
+    """Download GeoLite2 and cache it"""
+    if not license_key:
+        return None
+    
+    try:
+        url = f"https://download.maxmind.com/app/geoip_download"
+        params = {
+            "edition_id": "GeoLite2-City",
+            "license_key": license_key,
+            "suffix": "tar.gz"
+        }
+        
+        response = httpx.get(url, params=params, follow_redirects=True, timeout=60)
+        if response.status_code != 200:
+            st.error(f"GeoLite2 download failed: {response.status_code}")
+            return None
+        
+        # Extract .mmdb file from tar.gz
+        with tempfile.NamedTemporaryFile(suffix=".tar.gz") as tmp_tar:
+            tmp_tar.write(response.content)
+            tmp_tar.flush()
+            
+            with tarfile.open(tmp_tar.name, "r:gz") as tar:
+                for member in tar.getmembers():
+                    if member.name.endswith(".mmdb"):
+                        f = tar.extractfile(member)
+                        if f:
+                            return f.read()
+        
+        return None
+    except Exception as e:
+        st.error(f"GeoLite2 download error: {e}")
+        return None
+
+@st.cache_resource
+def init_geo_reader(_db_bytes: bytes):
+    """Initialize geo reader from cached bytes"""
+    if not _db_bytes:
+        return None
+    
+    # Write to temp file (required by both libraries)
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp.write(_db_bytes)
+        tmp_path = tmp.name
+    
+    try:
+        # Try MaxMind format first
+        try:
+            import maxminddb
+            reader = maxminddb.open_database(tmp_path)
+            # Mark as MaxMind type
+            reader._type = "maxmind"
+            return reader
+        except:
+            pass
+        
+        # Try IP2Location format
+        try:
+            import IP2Location
+            reader = IP2Location.IP2Location(tmp_path)
+            # Mark as IP2Location type
+            reader._type = "ip2location"
+            return reader
+        except:
+            pass
+    finally:
+        # Clean up temp file
+        try:
+            os.unlink(tmp_path)
+        except:
+            pass
+    
+    return None
+
+def get_license_key() -> Optional[str]:
+    """Get MaxMind license key from various sources"""
+    # Check Streamlit secrets (for deployment)
+    if hasattr(st, 'secrets') and "MAXMIND_LICENSE_KEY" in st.secrets:
+        return st.secrets["MAXMIND_LICENSE_KEY"]
+    
+    # Check environment variable
+    if "MAXMIND_LICENSE_KEY" in os.environ:
+        return os.environ["MAXMIND_LICENSE_KEY"]
+    
+    # Check session state
+    if "maxmind_license_key" in st.session_state:
+        return st.session_state.maxmind_license_key
+    
+    return None
+
+def geo_lookup(ip: str, reader=None) -> Dict[str, Any]:
+    """Universal geo lookup that works with any reader type"""
+    if not reader:
+        if "geo_reader" in st.session_state:
+            reader = st.session_state.geo_reader
+        else:
+            return {"country": "Unknown", "country_code": "XX"}
+    
+    if not reader:
+        return {"country": "Unknown", "country_code": "XX"}
+    
+    try:
+        # Check reader type
+        if hasattr(reader, '_type'):
+            if reader._type == "maxmind":
+                data = reader.get(ip) or {}
+                return {
+                    "country": data.get('country', {}).get('names', {}).get('en'),
+                    "country_code": data.get('country', {}).get('iso_code'),
+                    "city": data.get('city', {}).get('names', {}).get('en'),
+                    "lat": data.get('location', {}).get('latitude'),
+                    "lon": data.get('location', {}).get('longitude')
+                }
+            elif reader._type == "ip2location":
+                rec = reader.get_all(ip)
+                return {
+                    "country": rec.country_long if rec else None,
+                    "country_code": rec.country_short if rec else None,
+                    "city": rec.city if rec else None,
+                    "lat": rec.latitude if rec else None,
+                    "lon": rec.longitude if rec else None
+                }
+        
+        # Fallback: try both formats
+        if hasattr(reader, 'get'):  # MaxMind
+            data = reader.get(ip) or {}
+            return {
+                "country": data.get('country', {}).get('names', {}).get('en'),
+                "country_code": data.get('country', {}).get('iso_code'),
+                "city": data.get('city', {}).get('names', {}).get('en'),
+                "lat": data.get('location', {}).get('latitude'),
+                "lon": data.get('location', {}).get('longitude')
+            }
+        elif hasattr(reader, 'get_all'):  # IP2Location
+            rec = reader.get_all(ip)
+            return {
+                "country": rec.country_long if rec else None,
+                "country_code": rec.country_short if rec else None,
+                "city": rec.city if rec else None,
+                "lat": rec.latitude if rec else None,
+                "lon": rec.longitude if rec else None
+            }
+    except Exception as e:
+        pass
+    
+    return {"country": "Unknown", "country_code": "XX"}
 
 # ---------------------------------------------------
 # Models
@@ -102,7 +271,7 @@ class ProxyInfo:
         return f"{self.protocol}://{auth}{self.host}:{self.port}"
 
 # ---------------------------------------------------
-# Manual CONNECT tunnel for raw TCP (FIXED)
+# Manual CONNECT tunnel for raw TCP
 # ---------------------------------------------------
 async def _connect_chain_http_connect(
     chain: List[ProxyInfo], 
@@ -165,7 +334,7 @@ async def _connect_chain_http_connect(
         raise
 
 # ---------------------------------------------------
-# DNS over TCP Module (FIXED)
+# DNS over TCP Module
 # ---------------------------------------------------
 def build_dns_query(name: str, qtype: int = 1) -> Tuple[bytes, int]:
     """Build DNS query packet with TCP framing"""
@@ -253,7 +422,7 @@ async def get_exit_ip_dns_direct() -> Optional[str]:
     return None
 
 async def get_exit_ip_dns_via_chain(chain: List[ProxyInfo]) -> Optional[str]:
-    """Get exit IP using DNS over TCP through HTTP/HTTPS chain (FIXED)"""
+    """Get exit IP using DNS over TCP through HTTP/HTTPS chain"""
     # Check chain compatibility
     if any(p.protocol not in ("http", "https") for p in chain):
         return None  # Silently fail for SOCKS chains
@@ -280,7 +449,7 @@ async def get_exit_ip_dns_via_chain(chain: List[ProxyInfo]) -> Optional[str]:
                     await wr.wait_closed()
                 except:
                     pass
-        except Exception as e:
+        except Exception:
             continue
     
     return None
@@ -314,108 +483,12 @@ def run_async(coro):
         return asyncio.run(coro)
 
 # ---------------------------------------------------
-# Geo Database Auto-Setup
-# ---------------------------------------------------
-async def download_ip2location() -> bool:
-    """Download IP2Location LITE (no registration required)"""
-    try:
-        IP2LOCATION_DIR.mkdir(exist_ok=True)
-        
-        # Check if recent
-        if IP2LOCATION_DB.exists():
-            age = datetime.now() - datetime.fromtimestamp(IP2LOCATION_DB.stat().st_mtime)
-            if age < timedelta(days=30):
-                return True
-        
-        url = "https://download.ip2location.com/lite/IP2LOCATION-LITE-DB5.BIN.ZIP"
-        
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.get(url)
-            if response.status_code != 200:
-                return False
-            
-            zip_file = IP2LOCATION_DIR / "db.zip"
-            with open(zip_file, "wb") as f:
-                f.write(response.content)
-            
-            with zipfile.ZipFile(zip_file, "r") as z:
-                z.extractall(IP2LOCATION_DIR)
-            
-            zip_file.unlink()
-            return True
-    except:
-        return False
-
-@st.cache_resource
-def init_geo_database():
-    """Initialize geo database with auto-download"""
-    # Try MaxMind first
-    if GEOLITE2_DB_PATH.exists():
-        try:
-            import maxminddb
-            return maxminddb.open_database(str(GEOLITE2_DB_PATH))
-        except:
-            pass
-    
-    # Try IP2Location
-    if IP2LOCATION_DB.exists():
-        try:
-            import IP2Location
-            return IP2Location.IP2Location(str(IP2LOCATION_DB))
-        except:
-            pass
-    
-    # Auto-download IP2Location
-    with st.spinner("Setting up geo database (one-time, ~20MB)..."):
-        if run_async(download_ip2location()):
-            try:
-                import IP2Location
-                return IP2Location.IP2Location(str(IP2LOCATION_DB))
-            except:
-                pass
-    
-    return None
-
-def geo_lookup(ip: str, db=None) -> Dict[str, Any]:
-    """Universal geo lookup"""
-    if not db:
-        db = init_geo_database()
-    
-    if not db:
-        return {"country": "Unknown", "country_code": "XX"}
-    
-    try:
-        # MaxMind format
-        if hasattr(db, 'get'):
-            data = db.get(ip) or {}
-            return {
-                "country": data.get('country', {}).get('names', {}).get('en'),
-                "country_code": data.get('country', {}).get('iso_code'),
-                "city": data.get('city', {}).get('names', {}).get('en'),
-                "lat": data.get('location', {}).get('latitude'),
-                "lon": data.get('location', {}).get('longitude')
-            }
-        # IP2Location format
-        elif hasattr(db, 'get_all'):
-            rec = db.get_all(ip)
-            return {
-                "country": rec.country_long,
-                "country_code": rec.country_short,
-                "city": rec.city,
-                "lat": rec.latitude,
-                "lon": rec.longitude
-            }
-    except:
-        pass
-    
-    return {"country": "Unknown", "country_code": "XX"}
-
-# ---------------------------------------------------
-# Database
+# Database (In-Memory for Streamlit Cloud)
 # ---------------------------------------------------
 @st.cache_resource
 def init_database():
-    conn = sqlite3.connect(DB_PATH)
+    """Initialize in-memory SQLite database"""
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS proxies (
@@ -435,20 +508,25 @@ def init_database():
         )
     """)
     conn.commit()
-    conn.close()
+    return conn
 
-init_database()
+# Get shared database connection
+db_conn = init_database()
 
 # ---------------------------------------------------
 # Session State
 # ---------------------------------------------------
-if "proxies_raw" not in st.session_state: st.session_state.proxies_raw = []
-if "proxies_validated" not in st.session_state: st.session_state.proxies_validated = []
-if "proxy_chain" not in st.session_state: st.session_state.proxy_chain = []
-if "geo_db" not in st.session_state: st.session_state.geo_db = init_geo_database()
+if "proxies_raw" not in st.session_state: 
+    st.session_state.proxies_raw = []
+if "proxies_validated" not in st.session_state: 
+    st.session_state.proxies_validated = []
+if "proxy_chain" not in st.session_state: 
+    st.session_state.proxy_chain = []
+if "geo_reader" not in st.session_state:
+    st.session_state.geo_reader = None
 
 # ---------------------------------------------------
-# Proxy Parsing (FIXED - handles IPv6 and auth)
+# Proxy Parsing
 # ---------------------------------------------------
 def parse_proxy_line(line: str) -> Optional[ProxyInfo]:
     """Parse proxy with proper URL parsing"""
@@ -486,7 +564,7 @@ async def fetch_proxies(url: str) -> List[ProxyInfo]:
         async with httpx.AsyncClient(timeout=20) as client:
             r = await client.get(url)
             if r.status_code == 200:
-                for line in r.text.splitlines()[:200]:
+                for line in r.text.splitlines()[:500]:
                     p = parse_proxy_line(line)
                     if p:
                         proxies.append(p)
@@ -495,7 +573,7 @@ async def fetch_proxies(url: str) -> List[ProxyInfo]:
     return proxies
 
 # ---------------------------------------------------
-# Proxy Validation (FIXED)
+# Proxy Validation
 # ---------------------------------------------------
 async def validate_proxy(proxy: ProxyInfo, timeout: int = 15, verify: bool = True) -> Tuple[bool, float]:
     """Validate proxy with proper httpx syntax"""
@@ -538,7 +616,7 @@ async def validate_batch(proxies: List[ProxyInfo], verify_tls: bool = True) -> L
                 proxy.last_tested = datetime.now()
                 
                 # Geo lookup
-                geo = geo_lookup(proxy.host, st.session_state.geo_db)
+                geo = geo_lookup(proxy.host, st.session_state.geo_reader)
                 proxy.country = geo.get('country')
                 proxy.country_code = geo.get('country_code')
                 proxy.city = geo.get('city')
@@ -549,10 +627,9 @@ async def validate_batch(proxies: List[ProxyInfo], verify_tls: bool = True) -> L
         except:
             pass
     
-    # Save to database
+    # Save to in-memory database
     if validated:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
+        cur = db_conn.cursor()
         for p in validated:
             cur.execute("""
                 INSERT OR REPLACE INTO proxies
@@ -564,13 +641,12 @@ async def validate_batch(proxies: List[ProxyInfo], verify_tls: bool = True) -> L
                 p.latency, p.last_tested, p.country, p.country_code,
                 p.city, p.lat, p.lon
             ))
-        conn.commit()
-        conn.close()
+        db_conn.commit()
     
     return validated
 
 # ---------------------------------------------------
-# Chain Testing (FIXED)
+# Chain Testing
 # ---------------------------------------------------
 async def test_chain_dns(chain: List[ProxyInfo]) -> Dict[str, Any]:
     """Test proxy chain with DNS exit IP detection"""
@@ -589,9 +665,9 @@ async def test_chain_dns(chain: List[ProxyInfo]) -> Dict[str, Any]:
             return {"success": False, "error": "Could not determine exit IP"}
         
         # Get geo for exit
-        exit_geo = geo_lookup(exit_ip, st.session_state.geo_db) if exit_ip else {}
+        exit_geo = geo_lookup(exit_ip, st.session_state.geo_reader) if exit_ip else {}
         
-        # Test anonymity with ChainProxyConnector for mixed chains
+        # Test anonymity
         urls = [p.as_url() for p in chain]
         connector = ChainProxyConnector.from_urls(urls)
         
@@ -632,7 +708,7 @@ async def test_chain_http(chain: List[ProxyInfo]) -> Dict[str, Any]:
                     return {
                         "success": True,
                         "exit_ip": exit_ip,
-                        "exit_geo": geo_lookup(exit_ip, st.session_state.geo_db) if exit_ip else {},
+                        "exit_geo": geo_lookup(exit_ip, st.session_state.geo_reader) if exit_ip else {},
                         "hop_count": len(chain),
                         "method": "HTTP (SOCKS chain)"
                     }
@@ -644,7 +720,8 @@ async def test_chain_http(chain: List[ProxyInfo]) -> Dict[str, Any]:
 # ---------------------------------------------------
 # Streamlit UI
 # ---------------------------------------------------
-st.title("🔒 ProxyStream Production")
+st.title("🔒 ProxyStream Cloud Edition")
+st.caption("DNS-based exit detection, automatic geo database setup")
 
 # Status bar
 col1, col2, col3 = st.columns(3)
@@ -653,11 +730,11 @@ with col1:
         with st.spinner("Getting IP via DNS..."):
             ip = run_async(get_exit_ip_dns_direct())
             if ip:
-                geo = geo_lookup(ip, st.session_state.geo_db)
+                geo = geo_lookup(ip, st.session_state.geo_reader)
                 st.success(f"IP: {ip} ({geo.get('country_code', 'XX')})")
 
 with col2:
-    db_status = "✅ Ready" if st.session_state.geo_db else "⚠️ No DB"
+    db_status = "✅ Ready" if st.session_state.geo_reader else "⚠️ Not Setup"
     st.metric("Geo Database", db_status)
 
 with col3:
@@ -667,21 +744,62 @@ with col3:
 with st.sidebar:
     st.header("🎛️ Control Panel")
     
-    # Settings (TLS verify defaults to TRUE for security)
-    st.subheader("⚙️ Settings")
-    verify_tls = st.checkbox("Verify TLS certificates", value=True, help="Default ON for security")
+    # Geo Database Setup
+    st.subheader("🌍 Geo Database Setup")
     
-    # Database status
-    st.subheader("📊 Database")
-    if st.session_state.geo_db:
-        if GEOLITE2_DB_PATH.exists():
-            st.success("✅ Using GeoLite2")
-        elif IP2LOCATION_DB.exists():
-            st.success("✅ Using IP2Location")
+    if st.session_state.geo_reader:
+        st.success("✅ Geo database active")
     else:
-        if st.button("📥 Setup Database", use_container_width=True):
-            st.session_state.geo_db = init_geo_database()
-            st.rerun()
+        setup_method = st.radio(
+            "Choose method:",
+            ["IP2Location (Free)", "GeoLite2 (License Key)"]
+        )
+        
+        if setup_method == "IP2Location (Free)":
+            if st.button("📥 Setup IP2Location", use_container_width=True):
+                with st.spinner("Downloading (~20MB)..."):
+                    db_bytes = download_ip2location_cached()
+                    if db_bytes:
+                        reader = init_geo_reader(db_bytes)
+                        if reader:
+                            st.session_state.geo_reader = reader
+                            st.success("✅ Ready!")
+                            st.rerun()
+        else:
+            license_key = get_license_key()
+            
+            if not license_key:
+                st.info("Get free key at [MaxMind](https://www.maxmind.com/en/geolite2/signup)")
+                
+                # For deployment: add to secrets
+                with st.expander("Streamlit Cloud Setup"):
+                    st.code("""
+# .streamlit/secrets.toml
+MAXMIND_LICENSE_KEY = "your_key"
+                    """)
+                
+                # For testing
+                key_input = st.text_input("License Key:", type="password")
+                if key_input:
+                    st.session_state.maxmind_license_key = key_input
+                    license_key = key_input
+            
+            if license_key:
+                if st.button("📥 Setup GeoLite2", use_container_width=True):
+                    with st.spinner("Downloading..."):
+                        db_bytes = download_geolite2_cached(license_key)
+                        if db_bytes:
+                            reader = init_geo_reader(db_bytes)
+                            if reader:
+                                st.session_state.geo_reader = reader
+                                st.success("✅ Ready!")
+                                st.rerun()
+    
+    st.markdown("---")
+    
+    # Settings
+    st.subheader("⚙️ Settings")
+    verify_tls = st.checkbox("Verify TLS", value=True, help="Default ON for security")
     
     st.markdown("---")
     
@@ -702,19 +820,19 @@ with st.sidebar:
     # Validate
     if st.session_state.proxies_raw:
         st.subheader("✅ Validate")
-        count = st.slider("Count to validate:", 5, 50, 10)
-        if st.button("🧪 Validate Proxies", use_container_width=True):
-            with st.spinner(f"Validating {count} proxies..."):
+        count = st.slider("Count:", 5, 50, 10)
+        if st.button("🧪 Validate", use_container_width=True):
+            with st.spinner(f"Validating {count}..."):
                 sample = st.session_state.proxies_raw[:count]
                 validated = run_async(validate_batch(sample, verify_tls=verify_tls))
                 st.session_state.proxies_validated.extend(validated)
-                # Deduplicate validated list
+                # Deduplicate
                 st.session_state.proxies_validated = list({p: None for p in st.session_state.proxies_validated}.keys())
                 st.success(f"✅ {len(validated)} working")
     
-    # Clear validated list
+    # Clear
     if st.session_state.proxies_validated:
-        if st.button("🗑️ Clear Validated List", use_container_width=True):
+        if st.button("🗑️ Clear Validated", use_container_width=True):
             st.session_state.proxies_validated = []
             st.rerun()
     
@@ -730,12 +848,10 @@ with st.sidebar:
             if p.latency:
                 label += f" {p.latency:.0f}ms"
             
-            if st.button(label, key=f"proxy_{i}", use_container_width=True):
+            if st.button(label, key=f"p_{i}", use_container_width=True):
                 if len(st.session_state.proxy_chain) < 5:
                     st.session_state.proxy_chain.append(p)
                     st.success(f"Added hop {len(st.session_state.proxy_chain)}")
-                else:
-                    st.error("Max 5 hops")
     
     # Current chain
     if st.session_state.proxy_chain:
@@ -743,17 +859,15 @@ with st.sidebar:
         for i, p in enumerate(st.session_state.proxy_chain):
             st.write(f"{i+1}. {p.protocol}://{p.host}:{p.port}")
         
-        # Test chain
+        # Test
         if len(st.session_state.proxy_chain) >= 2:
             if st.button("🧪 Test Chain", use_container_width=True):
-                with st.spinner("Testing chain..."):
+                with st.spinner("Testing..."):
                     result = run_async(test_chain_dns(st.session_state.proxy_chain))
                     if result["success"]:
                         st.success(f"✅ Exit: {result['exit_ip']}")
                         if result.get('anonymity'):
-                            st.info(f"Anonymity: {result['anonymity']}")
-                        if result.get('method'):
-                            st.caption(f"Method: {result['method']}")
+                            st.info(f"{result['anonymity']}")
                     else:
                         st.error(result['error'])
         
@@ -761,7 +875,7 @@ with st.sidebar:
             st.session_state.proxy_chain = []
             st.rerun()
 
-# Main area - Proxy List
+# Main area
 st.subheader("📊 Validated Proxies")
 
 if st.session_state.proxies_validated:
@@ -781,18 +895,12 @@ if st.session_state.proxies_validated:
     
     # Export
     csv = df.to_csv(index=False)
-    st.download_button(
-        "📥 Export CSV",
-        csv,
-        "proxies.csv",
-        "text/csv",
-        use_container_width=True
-    )
+    st.download_button("📥 Export CSV", csv, "proxies.csv", "text/csv")
 else:
-    st.info("No validated proxies yet. Load and validate from sidebar.")
+    st.info("No validated proxies yet")
     
-    if not st.session_state.geo_db:
-        st.warning("⚠️ Setup geo database first (click Setup Database in sidebar)")
+    if not st.session_state.geo_reader:
+        st.warning("⚠️ Setup geo database first (in sidebar)")
 
 st.markdown("---")
-st.caption("ProxyStream Production - Robust DNS over TCP, proper error handling, secure defaults")
+st.caption("ProxyStream Cloud - Complete implementation with all functions included")
