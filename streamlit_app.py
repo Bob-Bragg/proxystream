@@ -62,6 +62,7 @@ PROXY_SOURCES = {
         "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
         "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt",
         "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
+        "https://raw.githubusercontent.com/zenjahid/FreeProxy4u/refs/heads/main/socks5.txt",
         "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt",
     ],
     "Additional": [
