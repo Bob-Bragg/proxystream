@@ -66,6 +66,8 @@ PROXY_SOURCES = {
     "Primary": [
         "https://raw.githubusercontent.com/arandomguyhere/Proxy-Hound/refs/heads/main/docs/proxy_hound_results.txt",
         "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+        "https://raw.githubusercontent.com/claude89757/free_https_proxies/refs/heads/main/https_proxies.txt",
+        "https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/refs/heads/master/https.txt",
         "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
         "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
     ],
