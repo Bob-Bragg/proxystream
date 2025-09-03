@@ -1,1559 +1,1285 @@
 """
-ProxyStream Cloud - Fixed Production Edition
-Enhanced with security, performance, and best practices
-All issues resolved and ready to run
+ProxyStream Complete - True Multi-Hop Proxy Chain Testing System
+Real HTTP CONNECT tunneling, browser-side location, full chain routing
 """
 
 import asyncio
+import ssl
 import time
 import json
+import sqlite3
+import base64
 import os
-import re
-import logging
-import secrets
-import ssl
-import sys
-from typing import List, Dict, Any, Optional, Tuple, Set, Union
+from typing import List, Dict, Any, Optional, Tuple, Callable
 from datetime import datetime, timedelta
-from dataclasses import dataclass, field, asdict
-from urllib.parse import urlsplit, quote
-from collections import defaultdict, deque
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from contextlib import asynccontextmanager, contextmanager
-from functools import lru_cache, wraps
-import threading
-from enum import Enum
-import warnings
+from dataclasses import dataclass
+import ipaddress
+import re
+import statistics
+import random
+import socket
+import pathlib
 
-# Handle potential import errors gracefully
+import streamlit as st
+import streamlit.components.v1 as components
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import httpx
+import numpy as np
+import aiohttp
+from aiohttp_socks import ChainProxyConnector
+
+# Optional deps
 try:
-    import streamlit as st
-    import pandas as pd
-    import plotly.express as px
-    import httpx
-    import aiohttp
-    from aiohttp_socks import ProxyConnector
-    import nest_asyncio
-    import certifi
-    
-    # Apply nest_asyncio to handle event loop issues
-    nest_asyncio.apply()
-    
-except ImportError as e:
-    print(f"Missing dependency: {e}")
-    print("\nPlease install required packages:")
-    print("pip install streamlit pandas plotly httpx aiohttp aiohttp-socks nest-asyncio certifi")
-    sys.exit(1)
+    import redis  # type: ignore
+except Exception:
+    redis = None
+try:
+    import pyasn  # type: ignore
+except Exception:
+    pyasn = None
 
-# Suppress SSL warnings when verify is disabled
-warnings.filterwarnings('ignore', message='Unverified HTTPS request')
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Prometheus metrics
+from prometheus_client import start_http_server, Counter, Histogram, REGISTRY
 
 # ---------------------------------------------------
-# Configuration & Constants
+# Page & Constants
 # ---------------------------------------------------
 st.set_page_config(
-    page_title="ProxyStream Cloud Production",
-    page_icon="🚀",
+    page_title="ProxyStream Advanced",
+    page_icon="🔒",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Security constants
-MAX_PROXY_INPUT_SIZE = 10000  # Max chars for manual input
-MAX_CONCURRENT_CONNECTIONS = 100
-REQUEST_TIMEOUT = 30
-MAX_RETRIES = 3
-VERIFY_SSL = True  # Should be True in production
-
-# Proxy sources with reliability ratings
-PROXY_SOURCES = {
-    "Primary (Reliable)": [
-        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
-        "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-    ],
-    "SOCKS (Mixed)": [
-        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
-        "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks4.txt",
-    ],
-    "Community (Variable)": [
-        "https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt",
-        "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-    ]
-}
-
-# Validation endpoints (sorted by reliability)
-VALIDATION_ENDPOINTS = [
-    ("http://httpbin.org/ip", "json", "origin"),
-    ("https://api.ipify.org?format=json", "json", "ip"),
-    ("http://icanhazip.com", "text", None),
-    ("http://checkip.amazonaws.com", "text", None),
+PROXY_SOURCES = [
+    "https://raw.githubusercontent.com/arandomguyhere/Proxy-Hound/refs/heads/main/docs/proxy_hound_results.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+    "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
 ]
 
-# ---------------------------------------------------
-# Thread-safe Session State Manager
-# ---------------------------------------------------
-class ThreadSafeSessionState:
-    """Thread-safe wrapper for session state operations"""
-    
-    def __init__(self):
-        self._lock = threading.RLock()
-        self._initialize_defaults()
-    
-    def _initialize_defaults(self):
-        """Initialize session state with safe defaults"""
-        with self._lock:
-            defaults = {
-                "validated_proxies": deque(maxlen=1000),
-                "proxy_buffer": [],
-                "known_good_proxies": set(),
-                "stats": {
-                    "total_fetched": 0,
-                    "total_validated": 0,
-                    "total_working": 0,
-                    "last_validation": None,
-                    "success_rate": 0.0
-                },
-                "settings": {
-                    "max_concurrent": 50,
-                    "timeout": 10,
-                    "verify_ssl": VERIFY_SSL,
-                    "auto_save": False,
-                    "max_retries": MAX_RETRIES
-                },
-                "credentials": {
-                    "github_token": None,  # Don't store in session
-                    "gist_id": None
-                }
-            }
-            
-            for key, value in defaults.items():
-                if key not in st.session_state:
-                    st.session_state[key] = value
-    
-    def add_validated_proxy(self, proxy):
-        """Thread-safe proxy addition"""
-        with self._lock:
-            st.session_state.validated_proxies.append(proxy)
-            st.session_state.stats["total_working"] += 1
-    
-    def update_stats(self, **kwargs):
-        """Thread-safe stats update"""
-        with self._lock:
-            st.session_state.stats.update(kwargs)
+GEO_APIS = [
+    {"url": "http://ip-api.com/json/{}", "has_asn": True},
+    {"url": "https://ipapi.co/{}/json/", "has_asn": True},
+    {"url": "https://ipwhois.app/json/{}", "has_asn": True},
+]
 
-# Initialize session manager
-session_manager = ThreadSafeSessionState()
+EXIT_IP_PROVIDERS = [
+    "https://ipapi.co/json",
+    "https://ipinfo.io/json",
+    "https://api.ipify.org?format=json"
+]
+
+DB_PATH = "proxystream_final.db"
+CLIENT_GEO_KEY = "client_geo"
+CERT_PINS: Dict[str, str] = {
+    # "example.com": "sha256/<base64_fp>",   # e.g., "sha256:W6ph5Mm5Pz8GgiULbPgzG37mj9g="
+}
+
+# Redis config (optional)
+REDIS_URL = os.getenv("PROXYSTREAM_REDIS_URL", "")
+redis_client = redis.Redis.from_url(REDIS_URL) if (redis and REDIS_URL) else None
+
+# pyasn DB (optional offline ASN)
+PYASN_DB = os.getenv("PROXYSTREAM_PYASN_DB", "ipasn.dat")
+pyasn_obj = pyasn.pyasn(PYASN_DB) if (pyasn and pathlib.Path(PYASN_DB).exists()) else None
 
 # ---------------------------------------------------
-# Data Models with Validation
+# Prometheus metrics (handle Streamlit reloads)
 # ---------------------------------------------------
-class ProxyProtocol(Enum):
-    """Supported proxy protocols"""
-    HTTP = "http"
-    HTTPS = "https"
-    SOCKS4 = "socks4"
-    SOCKS5 = "socks5"
+# Use try-except to handle re-registration on Streamlit reload
+try:
+    METRIC_FETCH_OK = Counter("proxystream_fetch_success_total", "Successful fetches")
+    METRIC_FETCH_ERR = Counter("proxystream_fetch_errors_total", "Errored fetches")
+    METRIC_CHAIN_TEST = Histogram("proxystream_chain_total_ms", "Total chain test time (ms)")
+    METRIC_HOP_MS = Histogram("proxystream_hop_ms", "Per-hop handshake time (ms)")
+    METRIC_RATE_LIMIT_BLOCK = Counter("proxystream_rate_limit_block_total", "Rate limited blocks")
+except ValueError:
+    # Metrics already registered, get them from the registry
+    METRIC_FETCH_OK = REGISTRY._names_to_collectors["proxystream_fetch_success_total"]
+    METRIC_FETCH_ERR = REGISTRY._names_to_collectors["proxystream_fetch_errors_total"]
+    METRIC_CHAIN_TEST = REGISTRY._names_to_collectors["proxystream_chain_total_ms"]
+    METRIC_HOP_MS = REGISTRY._names_to_collectors["proxystream_hop_ms"]
+    METRIC_RATE_LIMIT_BLOCK = REGISTRY._names_to_collectors["proxystream_rate_limit_block_total"]
 
+# Try to start metrics server
+try:
+    start_http_server(int(os.getenv("PROXYSTREAM_METRICS_PORT", "9108")))
+except Exception:
+    pass  # Server already running or port in use
+
+# ---------------------------------------------------
+# Simple TTL cache (in-memory)
+# ---------------------------------------------------
+class TTLCache:
+    def __init__(self, ttl_seconds: int = 300, maxsize: int = 4096):
+        self.ttl = ttl_seconds
+        self.maxsize = maxsize
+        self._store: Dict[str, Tuple[float, Any]] = {}
+
+    def get(self, key: str):
+        now = time.time()
+        item = self._store.get(key)
+        if not item:
+            return None
+        ts, value = item
+        if now - ts > self.ttl:
+            self._store.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value: Any):
+        if len(self._store) >= self.maxsize:
+            self._store.pop(next(iter(self._store)))
+        self._store[key] = (time.time(), value)
+
+exit_ip_cache = TTLCache(ttl_seconds=300)
+
+# ---------------------------------------------------
+# Database Init with PRAGMAs, Indexes, Partitions
+# ---------------------------------------------------
+@st.cache_resource
+def init_database():
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.executescript("""
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA temp_store=MEMORY;
+        PRAGMA mmap_size=268435456;
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS proxies (
+            host TEXT,
+            port INTEGER,
+            protocol TEXT DEFAULT 'http',
+            username TEXT,
+            password TEXT,
+            latency REAL,
+            last_tested TIMESTAMP,
+            country TEXT,
+            country_code TEXT,
+            city TEXT,
+            region TEXT,
+            lat REAL,
+            lon REAL,
+            asn TEXT,
+            org TEXT,
+            isp TEXT,
+            PRIMARY KEY (host, port, protocol)
+        )
+    """)
+    # Base log table for backward compat
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS chain_tests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chain_id INTEGER,
+            tested_at TIMESTAMP,
+            exit_ip TEXT,
+            total_latency REAL,
+            hop_timings_json TEXT,
+            stats_json TEXT,
+            anonymity_json TEXT
+        )
+    """)
+    cur.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_proxies_last_tested ON proxies(last_tested);
+        CREATE INDEX IF NOT EXISTS idx_proxies_country_asn ON proxies(country_code, asn);
+        CREATE INDEX IF NOT EXISTS idx_proxies_latency ON proxies(latency);
+    """)
+    conn.commit()
+    conn.close()
+
+def ensure_month_partition(table_prefix: str = "chain_tests"):
+    month = datetime.utcnow().strftime("%Y%m")
+    table = f"{table_prefix}_{month}"
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chain_id INTEGER,
+            tested_at TIMESTAMP,
+            exit_ip TEXT,
+            total_latency REAL,
+            hop_timings_json TEXT,
+            stats_json TEXT,
+            anonymity_json TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+    return table
+
+def downsample_chain_tests(older_than_days: int = 30):
+    """Downsample older chain tests (keep daily mean)."""
+    cutoff = datetime.utcnow() - timedelta(days=older_than_days)
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    # simple downsample on base table
+    cur.execute(f"""
+        DELETE FROM chain_tests
+        WHERE date(tested_at) < date(?)
+          AND id NOT IN (
+            SELECT id FROM (
+              SELECT id, date(tested_at) d,
+                     AVG(total_latency) OVER (PARTITION BY date(tested_at)) m
+              FROM chain_tests
+            ) t
+          )
+    """, (cutoff_str,))
+    conn.commit()
+    conn.close()
+
+init_database()
+
+# ---------------------------------------------------
+# Session State
+# ---------------------------------------------------
+if "proxies_raw" not in st.session_state: st.session_state.proxies_raw = []
+if "proxies_validated" not in st.session_state: st.session_state.proxies_validated = []
+if "proxy_chain" not in st.session_state: st.session_state.proxy_chain = []
+if "client_location" not in st.session_state: st.session_state.client_location = None
+if "chain_test_result" not in st.session_state: st.session_state.chain_test_result = None
+
+# ---------------------------------------------------
+# Models & Utilities
+# ---------------------------------------------------
 @dataclass
-class Proxy:
-    """Proxy data model with validation"""
+class ProxyInfo:
     host: str
     port: int
-    protocol: Union[ProxyProtocol, str] = ProxyProtocol.HTTP
+    protocol: str = "http"  # http/https/socks4/socks5 for pooled; manual CONNECT supports http/https
     username: Optional[str] = None
     password: Optional[str] = None
     latency: Optional[float] = None
-    last_tested: Optional[datetime] = None
+    country: Optional[str] = None
+    country_code: Optional[str] = None
+    city: Optional[str] = None
+    region: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    asn: Optional[str] = None
+    org: Optional[str] = None
+    isp: Optional[str] = None
     is_valid: bool = False
-    test_count: int = 0
-    error_count: int = 0
-    exit_ip: Optional[str] = None  # Added missing field
-    
-    def __post_init__(self):
-        """Validate proxy data"""
-        # Validate port
-        if not 1 <= self.port <= 65535:
-            raise ValueError(f"Invalid port: {self.port}")
-        
-        # Validate host (basic check)
-        if not self.host or len(self.host) > 255:
-            raise ValueError(f"Invalid host: {self.host}")
-        
-        # Convert protocol string to enum if needed
-        if isinstance(self.protocol, str):
-            try:
-                self.protocol = ProxyProtocol(self.protocol.lower())
-            except ValueError:
-                # Default to HTTP if unknown protocol
-                self.protocol = ProxyProtocol.HTTP
-        elif not isinstance(self.protocol, ProxyProtocol):
-            self.protocol = ProxyProtocol.HTTP
-    
+    last_tested: Optional[datetime] = None
+
     def __hash__(self):
-        # Handle both enum and string protocols
-        if isinstance(self.protocol, ProxyProtocol):
-            protocol_str = self.protocol.value
-        else:
-            protocol_str = str(self.protocol).lower()
-        return hash((self.host, self.port, protocol_str))
-    
-    def __eq__(self, other):
-        if isinstance(other, Proxy):
-            return (self.host, self.port, self.protocol) == (other.host, other.port, other.protocol)
-        return False
-    
-    @property
-    def url(self) -> str:
-        """Get proxy URL with auth if present"""
-        auth = f"{self.username}:{self.password}@" if self.username else ""
-        # Handle both enum and string protocols
-        if isinstance(self.protocol, ProxyProtocol):
-            protocol_str = self.protocol.value
-        else:
-            protocol_str = str(self.protocol).lower()
-        return f"{protocol_str}://{auth}{self.host}:{self.port}"
-    
-    @property
-    def reliability_score(self) -> float:
-        """Calculate reliability score based on test history"""
-        if self.test_count == 0:
-            return 0.0
-        success_rate = 1 - (self.error_count / self.test_count)
-        latency_factor = 1 / (1 + (self.latency or 1000) / 1000)
-        return success_rate * 0.7 + latency_factor * 0.3
-    
-    def to_dict(self) -> dict:
-        """Convert to dictionary for export"""
-        # Handle both enum and string protocols
-        if isinstance(self.protocol, ProxyProtocol):
-            protocol_str = self.protocol.value
-        else:
-            protocol_str = str(self.protocol)
-            
-        return {
-            "host": self.host,
-            "port": self.port,
-            "protocol": protocol_str,
-            "latency": self.latency,
-            "reliability": self.reliability_score,
-            "url": self.url
-        }
+        return hash((self.host, self.port, self.protocol, self.username, self.password))
 
-# ---------------------------------------------------
-# Enhanced Async Validator with Connection Pooling
-# ---------------------------------------------------
-class ProxyValidator:
-    """Production-grade proxy validator with connection pooling and retry logic"""
-    
-    def __init__(self, max_concurrent: int = 50, timeout: int = 10, verify_ssl: bool = True):
-        self.max_concurrent = max_concurrent
-        self.timeout = timeout
-        self.verify_ssl = verify_ssl
-        self.session = None
-        self._connector = None
-        self._semaphore = None
-        
-    @asynccontextmanager
-    async def session_context(self):
-        """Context manager for session lifecycle"""
-        timeout_config = aiohttp.ClientTimeout(total=self.timeout)
-        
-        # Create SSL context with proper configuration
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        if not self.verify_ssl:
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-        
-        connector = aiohttp.TCPConnector(
-            limit=self.max_concurrent,
-            limit_per_host=10,
-            ttl_dns_cache=300,
-            enable_cleanup_closed=True,
-            ssl=ssl_context
-        )
-        
-        self.session = aiohttp.ClientSession(
-            timeout=timeout_config,
-            connector=connector,
-            headers={"User-Agent": "ProxyStream/1.0"}
-        )
-        self._semaphore = asyncio.Semaphore(self.max_concurrent)
-        
+    def as_url(self) -> str:
+        auth = ""
+        if self.username and self.password:
+            auth = f"{self.username}:{self.password}@"
+        return f"{self.protocol}://{auth}{self.host}:{self.port}"
+
+# Circuit breaker
+class Circuit:
+    def __init__(self, threshold: int = 5, cooldown_seconds: int = 120):
+        self.failures = 0
+        self.opened_at: Optional[float] = None
+        self.threshold = threshold
+        self.cooldown = cooldown_seconds
+
+    def record_success(self):
+        self.failures = 0
+        self.opened_at = None
+
+    def record_failure(self):
+        self.failures += 1
+        if self.failures >= self.threshold:
+            self.opened_at = time.time()
+
+    def can_attempt(self) -> bool:
+        return self.opened_at is None or (time.time() - self.opened_at) >= self.cooldown
+
+async def retry_with_backoff(fn: Callable[[], Any], retries: int = 3, base: float = 1.0, jitter: float = 0.3):
+    last = None
+    for i in range(retries + 1):
         try:
-            yield self
-        finally:
-            await self.session.close()
-            await connector.close()
-    
-    async def test_proxy_with_retry(self, proxy: Proxy, max_retries: int = 3) -> bool:
-        """Test proxy with exponential backoff retry"""
-        for attempt in range(max_retries):
-            try:
-                if await self._test_single_proxy(proxy):
-                    return True
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout testing {proxy.host}:{proxy.port} (attempt {attempt + 1})")
-            except Exception as e:
-                logger.debug(f"Error testing proxy: {e}")
-            
-            if attempt < max_retries - 1:
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
-        
-        proxy.error_count += 1
-        return False
-    
-    async def _test_single_proxy(self, proxy: Proxy) -> bool:
-        """Test a single proxy against validation endpoints"""
-        proxy.test_count += 1
-        
-        for endpoint, response_type, ip_field in VALIDATION_ENDPOINTS[:2]:
-            try:
-                start = time.perf_counter()
-                
-                # Configure proxy based on protocol
-                if proxy.protocol in [ProxyProtocol.HTTP, ProxyProtocol.HTTPS]:
-                    proxy_url = proxy.url
-                    async with self.session.get(
-                        endpoint,
-                        proxy=proxy_url,
-                        ssl=self.verify_ssl,
-                        allow_redirects=False
-                    ) as response:
-                        if response.status in [200, 301, 302]:
-                            proxy.latency = (time.perf_counter() - start) * 1000
-                            proxy.is_valid = True
-                            proxy.last_tested = datetime.now()
-                            
-                            # Try to extract exit IP
-                            if response_type == "json" and response.status == 200:
-                                try:
-                                    data = await response.json()
-                                    proxy.exit_ip = data.get(ip_field)
-                                except:
-                                    pass
-                            
-                            return True
-                else:
-                    # SOCKS proxy handling with error handling
-                    try:
-                        connector = ProxyConnector.from_url(proxy.url)
-                        async with aiohttp.ClientSession(connector=connector) as socks_session:
-                            async with socks_session.get(endpoint, ssl=self.verify_ssl) as response:
-                                if response.status in [200, 301, 302]:
-                                    proxy.latency = (time.perf_counter() - start) * 1000
-                                    proxy.is_valid = True
-                                    proxy.last_tested = datetime.now()
-                                    return True
-                    except Exception as e:
-                        logger.debug(f"SOCKS proxy error: {e}")
-                        continue
-                
-            except asyncio.TimeoutError:
-                continue
-            except Exception as e:
-                logger.debug(f"Validation error for {proxy.host}: {str(e)[:50]}")
-                continue
-        
-        return False
-    
-    async def validate_batch(self, proxies: List[Proxy], progress_callback=None) -> List[Proxy]:
-        """Validate a batch of proxies concurrently"""
-        valid_proxies = []
-        
-        async def validate_with_semaphore(proxy):
-            async with self._semaphore:
+            return await fn()
+        except Exception as e:
+            last = e
+            if i == retries:
+                break
+            await asyncio.sleep(base * (2 ** i) + random.uniform(0, jitter))
+    raise last
+
+# Local token bucket; Redis-backed if available
+class RateLimiter:
+    def __init__(self, rate: int, per_seconds: int, key_prefix: str = "rl:"):
+        self.rate = rate
+        self.per = per_seconds
+        self.key_prefix = key_prefix
+        self.local_buckets: Dict[str, Tuple[int, float]] = {}
+
+    def _redis_key(self, key: str) -> str:
+        return f"{self.key_prefix}{key}"
+
+    def allow(self, key: str) -> bool:
+        if redis_client:
+            now = int(time.time())
+            rkey = self._redis_key(key)
+            with redis_client.pipeline() as pipe:
                 try:
-                    if await self.test_proxy_with_retry(proxy):
-                        valid_proxies.append(proxy)
-                        if progress_callback:
-                            progress_callback(1)
-                except Exception as e:
-                    logger.debug(f"Validation error: {e}")
-        
-        tasks = [validate_with_semaphore(proxy) for proxy in proxies]
-        await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Sort by reliability score
-        valid_proxies.sort(key=lambda p: p.reliability_score, reverse=True)
-        return valid_proxies
+                    pipe.incr(rkey, 1)
+                    pipe.expire(rkey, self.per)
+                    count, _ = pipe.execute()
+                    if int(count) <= self.rate:
+                        return True
+                    METRIC_RATE_LIMIT_BLOCK.inc()
+                    return False
+                except Exception:
+                    # fallback to local
+                    pass
+        # local fallback
+        now = time.time()
+        tokens, ts = self.local_buckets.get(key, (0, now))
+        if now - ts > self.per:
+            tokens, ts = 0, now
+        tokens += 1
+        self.local_buckets[key] = (tokens, ts)
+        if tokens <= self.rate:
+            return True
+        METRIC_RATE_LIMIT_BLOCK.inc()
+        return False
+
+rate_limiter = RateLimiter(rate=30, per_seconds=60, key_prefix="proxystream:")
 
 # ---------------------------------------------------
-# Secure Proxy Parsing with Input Validation
+# ASN Enrichment (Team Cymru WHOIS + optional pyasn)
 # ---------------------------------------------------
-def parse_proxy_line(line: str, strict: bool = True) -> Optional[Proxy]:
-    """Parse and validate proxy line with security checks"""
+async def team_cymru_bulk_lookup(ips: List[str]) -> Dict[str, Dict[str, str]]:
+    """
+    Query Team Cymru WHOIS (TCP 43) in bulk.
+    Returns mapping ip -> {asn, asn_org, cc, prefix, registry}
+    """
+    if not ips:
+        return {}
+    reader, writer = await asyncio.open_connection("whois.cymru.com", 43)
+    try:
+        writer.write(b"begin\nverbose\n")
+        for ip in ips:
+            writer.write((ip + "\n").encode())
+        writer.write(b"end\n")
+        await writer.drain()
+        data = await reader.read(-1)
+    finally:
+        writer.close()
+        try: await writer.wait_closed()
+        except Exception: pass
+
+    out: Dict[str, Dict[str, str]] = {}
+    lines = data.decode(errors="ignore").splitlines()
+    # skip header lines
+    for line in lines:
+        if line.startswith("AS") or line.lower().startswith("bulk mode"):
+            continue
+        # Format (verbose): ASN | IP | BGP Prefix | CC | Registry | Allocated | AS Name
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) >= 7:
+            asn, ip, prefix, cc, reg, alloc, as_name = parts[:7]
+            out[ip] = {
+                "asn": asn or None,
+                "asn_org": as_name or None,
+                "cc": cc or None,
+                "prefix": prefix or None,
+                "registry": reg or None,
+                "allocated": alloc or None
+            }
+    return out
+
+def pyasn_lookup(ip: str) -> Dict[str, Optional[str]]:
+    if not pyasn_obj:
+        return {}
+    try:
+        asn, prefix = pyasn_obj.lookup(ip)
+        return {"asn": str(asn) if asn else None, "prefix": prefix}
+    except Exception:
+        return {}
+
+# ---------------------------------------------------
+# Geo / Exit-IP / Anonymity
+# ---------------------------------------------------
+async def exit_ip_consensus_via_session(session: httpx.AsyncClient) -> Optional[str]:
+    cached = exit_ip_cache.get("exit")
+    if cached: return cached
+    ips = []
+    for url in EXIT_IP_PROVIDERS:
+        try:
+            r = await session.get(url, timeout=10)
+            if r.status_code == 200:
+                ip = r.json().get("ip")
+                if ip:
+                    ips.append(ip)
+        except Exception:
+            continue
+    if not ips:
+        return None
+    best = max(set(ips), key=ips.count)
+    exit_ip_cache.set("exit", best)
+    return best
+
+async def get_proxy_geo_with_asn(ip: str) -> Dict[str, Any]:
+    """
+    Try pyasn offline; fallback to public geo APIs; then optionally Team Cymru enrich if gaps.
+    """
+    out: Dict[str, Any] = {}
+    # pyasn first (offline)
+    if _is_ip(ip):
+        out.update(pyasn_lookup(ip))
+
+    # public APIs
+    async with httpx.AsyncClient(timeout=10) as client:
+        for api in GEO_APIS:
+            try:
+                r = await client.get(api["url"].format(ip))
+                if r.status_code == 200:
+                    d = r.json()
+                    out.setdefault('country', d.get('country') or d.get('country_name'))
+                    out.setdefault('country_code', d.get('country_code') or d.get('countryCode'))
+                    out.setdefault('city', d.get('city'))
+                    out.setdefault('region', d.get('region') or d.get('regionName'))
+                    out.setdefault('lat', d.get('latitude') or d.get('lat'))
+                    out.setdefault('lon', d.get('longitude') or d.get('lon'))
+                    out.setdefault('asn', out.get('asn') or d.get('asn') or d.get('as'))
+                    out.setdefault('org', d.get('org'))
+                    out.setdefault('isp', d.get('isp') or d.get('org'))
+                    break
+            except Exception:
+                continue
+
+    # Team Cymru if asn missing
+    if out.get("asn") is None and _is_ip(ip):
+        try:
+            tc = asyncio.get_event_loop().run_until_complete(team_cymru_bulk_lookup([ip]))
+        except RuntimeError:
+            tc = asyncio.run(team_cymru_bulk_lookup([ip]))
+        info = tc.get(ip) or {}
+        if info:
+            out['asn'] = info.get('asn') or out.get('asn')
+            out['org'] = info.get('asn_org') or out.get('org')
+            out['country_code'] = info.get('cc') or out.get('country_code')
+    return out
+
+def _is_ip(s: str) -> bool:
+    try:
+        ipaddress.ip_address(s)
+        return True
+    except Exception:
+        return False
+
+# ---------------------------------------------------
+# Validation for single proxy
+# ---------------------------------------------------
+async def validate_proxy(proxy: ProxyInfo, timeout: int = 10) -> Tuple[bool, float, Optional[str]]:
+    """
+    Validate a single HTTP proxy via httpx proxies param (socks not supported here).
+    Returns: (is_valid, latency_ms, exit_ip)
+    """
+    if not rate_limiter.allow(f"validate:{proxy.host}:{proxy.port}"):
+        return False, 0.0, None
+
+    proxy_url = proxy.as_url()
+    try:
+        start = time.perf_counter_ns()
+        async with httpx.AsyncClient(proxies=proxy_url, timeout=timeout) as client:
+            r = await client.get("http://httpbin.org/ip")
+            if r.status_code == 200:
+                latency_ms = (time.perf_counter_ns() - start) / 1_000_000
+                data = r.json()
+                exit_ip = data.get("origin", "").split(",")[0].strip()
+                return True, latency_ms, exit_ip
+    except Exception:
+        pass
+    return False, 0.0, None
+
+# ---------------------------------------------------
+# Proxy list parsing (IPv4 + IPv6)
+# ---------------------------------------------------
+_IPV4_PORT = re.compile(r"^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$")
+_IPV6_PORT = re.compile(r"^\[?([0-9a-fA-F:]+)\]?:([0-9]{1,5})$")
+
+def parse_possible_proxy_line(line: str) -> Optional[ProxyInfo]:
     line = line.strip()
-    
-    # Security: Limit line length
-    if len(line) > 500:
-        logger.warning(f"Proxy line too long: {len(line)} chars")
-        return None
-    
-    # Skip comments and empty lines
-    if not line or line.startswith("#"):
-        return None
-    
-    # Sanitize input - remove potentially dangerous characters
-    line = re.sub(r'[^\w\s:/@.-]', '', line)
-    
-    # Auto-detect protocol
-    if "://" not in line:
-        if ":1080" in line or ":9050" in line:
-            line = "socks5://" + line
-        elif ":4145" in line:
-            line = "socks4://" + line
-        else:
-            line = "http://" + line
-    
-    try:
-        parts = urlsplit(line)
-        
-        # Validate components
-        if not parts.hostname or not parts.port:
-            if ":" in line and "/" not in line and not strict:
-                # Try simple host:port format
-                try:
-                    host, port = line.rsplit(":", 1)
-                    return Proxy(host=host, port=int(port))
-                except:
-                    return None
-            return None
-        
-        # Validate protocol
-        protocol = parts.scheme or "http"
-        if protocol not in ["http", "https", "socks4", "socks5"]:
-            return None
-        
-        # Create proxy with validation
-        return Proxy(
-            host=parts.hostname,
-            port=parts.port,
-            protocol=ProxyProtocol(protocol),
-            username=parts.username,
-            password=parts.password
-        )
-    except Exception as e:
-        logger.debug(f"Failed to parse proxy line: {e}")
+    if not line or line.startswith('#'):
         return None
 
-# ---------------------------------------------------
-# Optimized Fetching with Caching
-# ---------------------------------------------------
-@st.cache_data(ttl=300, max_entries=50)
-def fetch_proxies_cached(url: str, limit: int = 1000) -> List[Dict]:
-    """Fetch and cache proxy lists (returns dicts for serialization)"""
-    proxies = []
-    
+    proto = "http"
+    rest = line
+    user = pw = None
+
+    if "://" in line:
+        proto, rest = line.split("://", 1)
+
+    if "@" in rest:
+        auth, addr = rest.split("@", 1)
+        if ":" in auth:
+            user, pw = auth.split(":", 1)
+        rest = addr
+
+    # IPv4 or IPv6
+    m4 = _IPV4_PORT.match(rest)
+    if m4:
+        host, port_s = m4.group(1), m4.group(2)
+    else:
+        m6 = _IPV6_PORT.match(rest)
+        if not m6:
+            return None
+        host, port_s = m6.group(1), m6.group(2)
+
     try:
-        # Use httpx with timeout and size limits
-        with httpx.Client(timeout=20, limits=httpx.Limits(max_keepalive_connections=5), verify=False) as client:
-            response = client.get(url, follow_redirects=True)
-            
-            # Security: Limit response size (10MB)
-            if len(response.content) > 10 * 1024 * 1024:
-                logger.warning(f"Response too large from {url}")
-                return []
-            
-            if response.status_code == 200:
-                lines = response.text.strip().split('\n')[:limit]
-                for line in lines:
-                    proxy = parse_proxy_line(line, strict=False)
-                    if proxy:
-                        # Convert to simple dictionary with string protocol
-                        proxy_dict = {
-                            "host": proxy.host,
-                            "port": proxy.port,
-                            "protocol": proxy.protocol.value if isinstance(proxy.protocol, ProxyProtocol) else str(proxy.protocol),
-                            "username": proxy.username,
-                            "password": proxy.password
-                        }
-                        proxies.append(proxy_dict)
-    
-    except httpx.TimeoutException:
-        logger.warning(f"Timeout fetching {url}")
-        st.warning(f"Timeout fetching from {url}")
+        ipaddress.ip_address(host)
+    except Exception:
+        return None
+    port = int(port_s)
+    if not (1 <= port <= 65535):
+        return None
+
+    return ProxyInfo(host=host, port=port, protocol=proto.lower(), username=user, password=pw)
+
+async def fetch_and_parse_proxies(source_url: str, limit: int = 1000) -> List[ProxyInfo]:
+    proxies: List[ProxyInfo] = []
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.get(source_url)
+            if r.status_code == 200:
+                for line in r.text.strip().splitlines()[:limit]:
+                    pi = parse_possible_proxy_line(line)
+                    if pi:
+                        proxies.append(pi)
     except Exception as e:
-        logger.error(f"Error fetching {url}: {e}")
-        st.error(f"Failed to fetch from {url}: {str(e)[:100]}")
-    
+        st.warning(f"Failed to fetch {source_url}: {str(e)[:100]}")
     return proxies
 
-# Helper function to safely create Proxy from dict
-def create_proxy_from_dict(data: Dict) -> Optional[Proxy]:
-    """Safely create a Proxy object from a dictionary"""
-    try:
-        # Ensure required fields exist
-        if not data.get('host') or not data.get('port'):
-            return None
-        
-        # Clean the data
-        cleaned_data = {
-            'host': str(data['host']),
-            'port': int(data['port']),
-            'protocol': str(data.get('protocol', 'http')).lower(),
-            'username': data.get('username'),
-            'password': data.get('password')
-        }
-        
-        return Proxy(**cleaned_data)
-    except Exception as e:
-        logger.debug(f"Failed to create proxy from dict: {e}")
-        return None
-
 # ---------------------------------------------------
-# Secure GitHub Gist Integration
+# Batch validate + Geo enrich + Safe DB writes + Redis tiered cache
 # ---------------------------------------------------
-class SecureGistManager:
-    """Secure GitHub Gist manager with encryption option"""
-    
-    @staticmethod
-    def validate_token(token: str) -> bool:
-        """Validate GitHub token format"""
-        # Basic validation - tokens are usually 40 chars
-        return bool(token and len(token) >= 20 and token.replace("_", "").replace("-", "").isalnum())
-    
-    @staticmethod
-    def save_to_gist(proxies: List[Proxy], token: str, gist_id: Optional[str] = None) -> Optional[str]:
-        """Save proxies to GitHub Gist with error handling"""
-        if not SecureGistManager.validate_token(token):
-            st.error("Invalid GitHub token format")
-            return None
-        
-        # Prepare content
-        content = "\n".join([p.url for p in proxies if p.is_valid])
-        
-        # Add metadata
-        metadata = {
-            "timestamp": datetime.now().isoformat(),
-            "count": len(proxies),
-            "version": "1.0"
-        }
-        
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        data = {
-            "description": f"ProxyStream Export - {metadata['timestamp']}",
-            "public": False,
-            "files": {
-                "proxies.txt": {"content": content},
-                "metadata.json": {"content": json.dumps(metadata, indent=2)}
-            }
-        }
-        
-        try:
-            with httpx.Client(timeout=10, verify=False) as client:
-                if gist_id:
-                    response = client.patch(
-                        f"https://api.github.com/gists/{gist_id}",
-                        headers=headers,
-                        json=data
-                    )
-                else:
-                    response = client.post(
-                        "https://api.github.com/gists",
-                        headers=headers,
-                        json=data
-                    )
-                
-                if response.status_code in [200, 201]:
-                    return response.json().get("id")
-                else:
-                    logger.error(f"GitHub API error: {response.status_code}")
-                    st.error(f"Failed to save: {response.status_code}")
-        
-        except Exception as e:
-            logger.error(f"Gist save error: {e}")
-            st.error("Failed to save to Gist")
-        
-        return None
-    
-    @staticmethod
-    def load_from_gist(token: str, gist_id: str) -> List[Proxy]:
-        """Load proxies from GitHub Gist with validation"""
-        if not SecureGistManager.validate_token(token):
-            st.error("Invalid GitHub token")
-            return []
-        
-        if not gist_id or not gist_id.replace("-", "").isalnum():
-            st.error("Invalid Gist ID")
-            return []
-        
-        headers = {
-            "Authorization": f"token {token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        try:
-            with httpx.Client(timeout=10, verify=False) as client:
-                response = client.get(
-                    f"https://api.github.com/gists/{gist_id}",
-                    headers=headers
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    content = data["files"]["proxies.txt"]["content"]
-                    
-                    proxies = []
-                    for line in content.split('\n'):
-                        proxy = parse_proxy_line(line)
-                        if proxy:
-                            proxy.is_valid = True
-                            proxies.append(proxy)
-                    
-                    return proxies
-                else:
-                    st.error(f"Failed to load: {response.status_code}")
-        
-        except Exception as e:
-            logger.error(f"Gist load error: {e}")
-            st.error("Failed to load from Gist")
-        
-        return []
-
-# ---------------------------------------------------
-# Fixed Async Runner with Proper Error Handling
-# ---------------------------------------------------
-def run_async_validation(proxies: List[Proxy], max_concurrent: int = 50, 
-                         verify_ssl: bool = True, progress_callback=None) -> List[Proxy]:
-    """Run async validation with proper cleanup and event loop handling"""
-    async def validate():
-        validator = ProxyValidator(
-            max_concurrent=max_concurrent,
-            verify_ssl=verify_ssl
-        )
-        async with validator.session_context():
-            return await validator.validate_batch(proxies, progress_callback)
-    
-    try:
-        # Try to get the current event loop
-        try:
-            loop = asyncio.get_running_loop()
-            # If we're here, there's already a running loop
-            # Create a task and run it
-            task = asyncio.create_task(validate())
-            # Use asyncio.run in a thread
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, validate())
-                return future.result(timeout=300)  # 5 minute timeout
-        except RuntimeError:
-            # No running event loop, we can use asyncio.run directly
-            return asyncio.run(validate())
-    except Exception as e:
-        logger.error(f"Validation error: {e}")
-        st.error(f"Validation failed: {str(e)[:100]}")
-        return []
-
-# ---------------------------------------------------
-# UI Components with Error Boundaries
-# ---------------------------------------------------
-def safe_render(func):
-    """Decorator to catch and display UI errors gracefully"""
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        try:
-            return func(*args, **kwargs)
-        except Exception as e:
-            logger.error(f"UI Error in {func.__name__}: {e}")
-            st.error(f"Display error: {str(e)[:100]}")
-    return wrapper
-
-@safe_render
-def render_stats():
-    """Render statistics dashboard"""
-    col1, col2, col3, col4 = st.columns(4)
-    
-    stats = st.session_state.stats
-    
-    with col1:
-        st.metric("Total Fetched", f"{stats['total_fetched']:,}")
-    
-    with col2:
-        st.metric("Total Validated", f"{stats['total_validated']:,}")
-    
-    with col3:
-        working = len([p for p in st.session_state.validated_proxies if p.is_valid])
-        st.metric("Working Proxies", f"{working:,}")
-    
-    with col4:
-        if stats['total_validated'] > 0:
-            success_rate = (stats['total_working'] / stats['total_validated']) * 100
-            st.metric("Success Rate", f"{success_rate:.1f}%")
-        else:
-            st.metric("Success Rate", "N/A")
-
-@safe_render
-def render_proxy_input():
-    """Render manual proxy input with validation"""
-    st.subheader("📝 Add Known Good Proxies")
-    
-    proxy_text = st.text_area(
-        "Enter proxies (one per line):",
-        height=100,
-        max_chars=MAX_PROXY_INPUT_SIZE,
-        placeholder="http://1.2.3.4:8080\nsocks5://user:pass@5.6.7.8:1080",
-        key="proxy_input"
-    )
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("➕ Add as Known Good", type="primary", use_container_width=True):
-            if proxy_text:
-                lines = proxy_text.strip().split('\n')
-                added = 0
-                errors = 0
-                
-                for line in lines[:100]:  # Limit to 100 at a time
-                    try:
-                        proxy = parse_proxy_line(line)
-                        if proxy:
-                            proxy.is_valid = True
-                            st.session_state.known_good_proxies.add(proxy)
-                            session_manager.add_validated_proxy(proxy)
-                            added += 1
-                    except Exception as e:
-                        errors += 1
-                        logger.debug(f"Parse error: {e}")
-                
-                if added:
-                    st.success(f"✅ Added {added} proxies")
-                if errors:
-                    st.warning(f"⚠️ {errors} lines had errors")
-    
-    with col2:
-        if st.button("🧪 Validate First", use_container_width=True):
-            if proxy_text:
-                lines = proxy_text.strip().split('\n')
-                proxies_to_test = []
-                
-                for line in lines[:50]:  # Limit validation batch
-                    try:
-                        proxy = parse_proxy_line(line)
-                        if proxy:
-                            proxies_to_test.append(proxy)
-                    except:
-                        continue
-                
-                if proxies_to_test:
-                    with st.spinner(f"Validating {len(proxies_to_test)} proxies..."):
-                        valid = run_async_validation(
-                            proxies_to_test,
-                            max_concurrent=10,
-                            verify_ssl=st.session_state.settings.get("verify_ssl", True)
-                        )
-                        
-                        for proxy in valid:
-                            st.session_state.known_good_proxies.add(proxy)
-                            session_manager.add_validated_proxy(proxy)
-                        
-                        st.success(f"✅ {len(valid)}/{len(proxies_to_test)} working")
-                        session_manager.update_stats(
-                            total_validated=st.session_state.stats["total_validated"] + len(proxies_to_test)
-                        )
-
-@safe_render
-def render_proxy_table():
-    """Render proxy table with export options"""
-    if not st.session_state.validated_proxies:
-        st.info("No validated proxies yet. Click 'Harvest & Validate' to get started!")
+def _cache_set_ip(ip: str, data: Dict[str, Any], ip_type: str = "dc"):
+    if not redis_client:
         return
-    
-    # Convert to DataFrame
-    data = []
-    for proxy in list(st.session_state.validated_proxies):
-        if proxy.is_valid:
-            # Handle both enum and string protocols
-            if isinstance(proxy.protocol, ProxyProtocol):
-                protocol_str = proxy.protocol.value.upper()
-            else:
-                protocol_str = str(proxy.protocol).upper()
-                
-            data.append({
-                'Protocol': protocol_str,
-                'Host': proxy.host,
-                'Port': proxy.port,
-                'Latency': f"{proxy.latency:.0f}ms" if proxy.latency else "N/A",
-                'Reliability': f"{proxy.reliability_score:.2f}",
-                'Status': "✅ Working",
-                'URL': proxy.url
-            })
-    
-    if data:
-        df = pd.DataFrame(data)
-        
-        # Filters
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            protocols = ["All"] + sorted(df['Protocol'].unique().tolist())
-            filter_protocol = st.selectbox("Filter Protocol", protocols)
-        
-        with col2:
-            sort_by = st.selectbox("Sort By", ["Reliability", "Latency", "Protocol"])
-        
-        with col3:
-            limit = st.number_input("Show Top", min_value=10, max_value=500, value=50)
-        
-        # Apply filters
-        filtered_df = df
-        if filter_protocol != "All":
-            filtered_df = filtered_df[filtered_df['Protocol'] == filter_protocol]
-        
-        # Sort
-        if sort_by == "Reliability":
-            filtered_df = filtered_df.sort_values("Reliability", ascending=False)
-        elif sort_by == "Latency":
-            filtered_df = filtered_df.sort_values("Latency")
-        
-        filtered_df = filtered_df.head(limit)
-        
-        st.dataframe(filtered_df, use_container_width=True, height=400, hide_index=True)
-        
-        # Export options
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            csv = filtered_df.to_csv(index=False)
-            st.download_button("📥 Export CSV", csv, "proxies.csv", "text/csv", use_container_width=True)
-        
-        with col2:
-            urls = "\n".join(filtered_df['URL'].tolist())
-            st.download_button("📥 Export URLs", urls, "proxy_urls.txt", "text/plain", use_container_width=True)
-        
-        with col3:
-            json_str = json.dumps([p.to_dict() for p in st.session_state.validated_proxies if p.is_valid], indent=2)
-            st.download_button("📥 Export JSON", json_str, "proxies.json", "application/json", use_container_width=True)
+    ttl = 300 if ip_type.lower() == "tor" else (3600 if ip_type.lower() == "residential" else 7 * 86400)
+    redis_client.setex(f"geo:{ip}", ttl, json.dumps(data))
 
-# ---------------------------------------------------
-# Logo and Branding
-# ---------------------------------------------------
-def render_logo():
-    """Render the ProxyStream logo from GitHub with proper styling"""
-    logo_url = "https://raw.githubusercontent.com/Bob-Bragg/proxystream/main/ProxyStream%20Logo%20Design.png"
-    
-    logo_html = f"""
-    <style>
-        .main-header {{
-            padding: 1rem 0 2rem 0;
-            border-bottom: 2px solid #1f2937;
-            margin-bottom: 2rem;
-        }}
-        .logo-container {{
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 1rem;
-        }}
-        .logo-img {{
-            max-width: 280px;
-            height: auto;
-            filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.1));
-        }}
-        .tagline {{
-            text-align: center;
-            color: #6b7280;
-            font-size: 1rem;
-            font-weight: 400;
-            letter-spacing: 0.5px;
-        }}
-        .metrics-container {{
-            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin: 1rem 0;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }}
-        .metric-card {{
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 8px;
-            padding: 1rem;
-            text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }}
-        .metric-value {{
-            font-size: 2rem;
-            font-weight: 700;
-            color: #00A6FB;
-        }}
-        .metric-label {{
-            font-size: 0.875rem;
-            color: #9ca3af;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-top: 0.25rem;
-        }}
-    </style>
-    
-    <div class="main-header">
-        <div class="logo-container">
-            <img src="{logo_url}" class="logo-img" alt="ProxyStream Logo" onerror="this.style.display='none'">
-        </div>
-        <div class="tagline">Enterprise-grade proxy management with security and performance optimizations</div>
-    </div>
+def _cache_get_ip(ip: str) -> Optional[Dict[str, Any]]:
+    if not redis_client:
+        return None
+    raw = redis_client.get(f"geo:{ip}")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+async def load_and_validate_batch(proxies: List[ProxyInfo], max_concurrent: int = 20) -> List[ProxyInfo]:
+    validated: List[ProxyInfo] = []
+    sem = asyncio.Semaphore(max_concurrent)
+    circ = Circuit(threshold=5, cooldown_seconds=120)
+
+    async def one(proxy: ProxyInfo):
+        async with sem:
+            if not circ.can_attempt():
+                return None
+            try:
+                async def attempt():
+                    return await validate_proxy(proxy)
+                ok, lat_ms, exit_ip = await retry_with_backoff(attempt, retries=2, base=0.8, jitter=0.4)
+                if ok:
+                    proxy.is_valid = True
+                    proxy.latency = lat_ms
+                    proxy.last_tested = datetime.now()
+
+                    # Geo from cache or live
+                    cached = _cache_get_ip(proxy.host)
+                    if cached:
+                        geo = cached
+                    else:
+                        geo = await get_proxy_geo_with_asn(proxy.host)
+                        # naive ip type classification
+                        ip_type = "dc"
+                        if geo.get("org") and any(k in (geo["org"] or "").lower() for k in ["comcast", "verizon", "isp", "residential"]):
+                            ip_type = "residential"
+                        _cache_set_ip(proxy.host, geo, ip_type)
+
+                    proxy.country = geo.get('country')
+                    proxy.country_code = geo.get('country_code')
+                    proxy.city = geo.get('city')
+                    proxy.region = geo.get('region')
+                    proxy.lat = geo.get('lat')
+                    proxy.lon = geo.get('lon')
+                    proxy.asn = geo.get('asn')
+                    proxy.org = geo.get('org')
+                    proxy.isp = geo.get('isp')
+                    circ.record_success()
+                    return proxy
+                circ.record_failure()
+                return None
+            except Exception:
+                circ.record_failure()
+                return None
+
+    results = await asyncio.gather(*(one(p) for p in proxies))
+    validated = [r for r in results if r]
+
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("BEGIN")
+    for p in validated:
+        cur.execute("""
+            INSERT OR REPLACE INTO proxies
+            (host, port, protocol, username, password, latency, last_tested,
+             country, country_code, city, region, lat, lon, asn, org, isp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            p.host, p.port, p.protocol, p.username, p.password, p.latency, p.last_tested,
+            p.country, p.country_code, p.city, p.region, p.lat, p.lon, p.asn, p.org, p.isp
+        ))
+    conn.commit()
+    conn.close()
+    return validated
+
+def load_proxies_from_db(filters: Dict[str, Any] = None) -> List[ProxyInfo]:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    q = """
+        SELECT host,port,protocol,username,password,latency,last_tested,
+               country,country_code,city,region,lat,lon,asn,org,isp
+        FROM proxies
+        WHERE last_tested > datetime('now', '-7 days')
     """
-    
-    st.markdown(logo_html, unsafe_allow_html=True)
+    params: List[Any] = []
+    if filters:
+        if filters.get('country'):
+            q += " AND (country LIKE ? OR country_code = ?)"
+            params += [f"%{filters['country']}%", filters['country']]
+        if filters.get('asn'):
+            q += " AND asn LIKE ?"
+            params.append(f"%{filters['asn']}%")
+        if filters.get('ip'):
+            q += " AND host LIKE ?"
+            params.append(f"%{filters['ip']}%")
+        if filters.get('protocol'):
+            q += " AND protocol = ?"
+            params.append(filters['protocol'])
+    q += " ORDER BY latency ASC LIMIT 500"
+    cur.execute(q, params)
+    rows = cur.fetchall()
+    conn.close()
+
+    out: List[ProxyInfo] = []
+    for r in rows:
+        out.append(ProxyInfo(
+            host=r[0], port=r[1], protocol=r[2], username=r[3], password=r[4],
+            latency=r[5], last_tested=r[6],
+            country=r[7], country_code=r[8], city=r[9], region=r[10],
+            lat=r[11], lon=r[12], asn=r[13], org=r[14], isp=r[15], is_valid=True
+        ))
+    return out
 
 # ---------------------------------------------------
-# Enhanced Stats Display
+# Manual CONNECT chain (per-hop timing + TLS)
 # ---------------------------------------------------
-def render_stats_cards():
-    """Render statistics in styled cards"""
-    stats = st.session_state.stats
-    working = len([p for p in st.session_state.validated_proxies if p.is_valid])
-    success_rate = (stats['total_working'] / stats['total_validated'] * 100) if stats['total_validated'] > 0 else 0
-    
-    stats_html = f"""
-    <div class="metrics-container">
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
-            <div class="metric-card">
-                <div class="metric-value">{stats['total_fetched']:,}</div>
-                <div class="metric-label">Total Fetched</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-value">{stats['total_validated']:,}</div>
-                <div class="metric-label">Total Validated</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-value">{working:,}</div>
-                <div class="metric-label">Working Proxies</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-value">{'%.1f%%' % success_rate if stats['total_validated'] > 0 else 'N/A'}</div>
-                <div class="metric-label">Success Rate</div>
-            </div>
-        </div>
-    </div>
-    """
-    
-    st.markdown(stats_html, unsafe_allow_html=True)
+async def _connect_via_chain_http_connect(
+    chain: List[ProxyInfo],
+    target_host: str,
+    target_port: int,
+    use_tls: bool
+) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    reader, writer = None, None
+    try:
+        r, w = await asyncio.open_connection(chain[0].host, chain[0].port)
+        reader, writer = r, w
+
+        for i in range(len(chain)):
+            dest_host = target_host if i == len(chain) - 1 else chain[i + 1].host
+            dest_port = target_port if i == len(chain) - 1 else chain[i + 1].port
+            req = f"CONNECT {dest_host}:{dest_port} HTTP/1.1\r\n"
+            req += f"Host: {dest_host}:{dest_port}\r\n"
+            req += "Connection: keep-alive\r\n"
+            pi = chain[i]
+            if pi.username and pi.password:
+                token = base64.b64encode(f"{pi.username}:{pi.password}".encode()).decode()
+                req += f"Proxy-Authorization: Basic {token}\r\n"
+            req += "\r\n"
+            writer.write(req.encode("ascii"))
+            await writer.drain()
+
+            status_line = await reader.readuntil(b"\r\n")
+            if b"200" not in status_line:
+                raise RuntimeError(f"CONNECT failed at hop {i+1}: {status_line.decode(errors='ignore').strip()}")
+
+            # Drain headers
+            while True:
+                line = await reader.readuntil(b"\r\n")
+                if line in (b"\r\n", b"\n", b""):
+                    break
+
+        if use_tls:
+            loop = asyncio.get_running_loop()
+            ssl_ctx = ssl.create_default_context()
+            raw_transport = writer.transport
+            protocol = reader._protocol  # private, acceptable here for wrap
+            tls_transport = await loop.start_tls(raw_transport, protocol, ssl_ctx, server_hostname=target_host)
+            new_reader = asyncio.StreamReader()
+            new_protocol = asyncio.StreamReaderProtocol(new_reader)
+            tls_transport.set_protocol(new_protocol)
+            new_writer = asyncio.StreamWriter(tls_transport, new_protocol, new_reader, loop)
+            return new_reader, new_writer
+
+        return reader, writer
+    except Exception:
+        if writer:
+            writer.close()
+        raise
 
 # ---------------------------------------------------
-# Main Application
+# Stats helpers
 # ---------------------------------------------------
-try:
-    # Custom CSS for overall styling
-    st.markdown("""
-    <style>
-        /* Main container adjustments */
-        .block-container {
-            padding-top: 2rem;
-            max-width: 100%;
-        }
-        
-        /* Sidebar styling */
-        .css-1d391kg, [data-testid="stSidebar"] {
-            background-color: #1e1e1e;
-            border-right: 1px solid #2d2d2d;
-        }
-        
-        /* Button styling */
-        .stButton > button {
-            width: 100%;
-            border-radius: 8px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-        }
-        
-        .stButton > button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 166, 251, 0.3);
-        }
-        
-        /* Primary button special styling */
-        .stButton > button[kind="primary"] {
-            background: linear-gradient(135deg, #00A6FB 0%, #0086D9 100%);
-            border: none;
-        }
-        
-        /* Tab styling */
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
-            background-color: rgba(30, 41, 59, 0.5);
-            padding: 4px;
-            border-radius: 12px;
-        }
-        
-        .stTabs [data-baseweb="tab"] {
-            border-radius: 8px;
-            font-weight: 600;
-            padding: 8px 16px;
-        }
-        
-        .stTabs [aria-selected="true"] {
-            background-color: #00A6FB;
-        }
-        
-        /* Metric styling */
-        [data-testid="metric-container"] {
-            background: rgba(30, 41, 59, 0.5);
-            padding: 1rem;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        /* Expander styling */
-        .streamlit-expanderHeader {
-            background: rgba(30, 41, 59, 0.5);
-            border-radius: 8px;
-            font-weight: 600;
-        }
-        
-        /* DataFrame styling */
-        .dataframe {
-            border: 1px solid #2d2d2d !important;
-            border-radius: 8px;
-        }
-        
-        /* Progress bar styling */
-        .stProgress > div > div > div {
-            background-color: #00A6FB;
-        }
-        
-        /* Success/Error/Warning messages */
-        .stAlert {
-            border-radius: 8px;
-            border-left: 4px solid;
-        }
-        
-        /* Hide Streamlit branding */
-        #MainMenu {visibility: hidden;}
-        footer {visibility: hidden;}
-        
-        /* Custom scrollbar */
-        ::-webkit-scrollbar {
-            width: 10px;
-            height: 10px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: #1e1e1e;
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: #4a4a4a;
-            border-radius: 5px;
-        }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: #00A6FB;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+def _ns_to_ms(ns: int) -> float: return ns / 1_000_000
 
-    # Display logo
-    render_logo()
+def compute_stats(samples_ms: List[float]) -> Dict[str, float]:
+    if not samples_ms: return {}
+    samples_sorted = sorted(samples_ms)
+    p50 = statistics.median(samples_sorted)
+    p95 = statistics.quantiles(samples_sorted, n=20)[18] if len(samples_sorted) >= 20 else samples_sorted[-1]
+    p99 = statistics.quantiles(samples_sorted, n=100)[98] if len(samples_sorted) >= 100 else samples_sorted[-1]
+    return {
+        "mean": statistics.mean(samples_sorted),
+        "p50": p50, "p95": p95, "p99": p99,
+        "stdev": statistics.pstdev(samples_sorted) if len(samples_sorted) > 1 else 0.0,
+        "count": float(len(samples_sorted))
+    }
 
-    # Display stats cards instead of default metrics
-    render_stats_cards()
+def compute_rfc3550_jitter(samples_ms: List[float]) -> float:
+    if len(samples_ms) < 2: return 0.0
+    J = 0.0; prev = samples_ms[0]
+    for s in samples_ms[1:]:
+        D = abs(s - prev)
+        J = J + (D - J) / 16.0
+        prev = s
+    return J
 
-    # Stats Dashboard
-    render_stats()
+# ---------------------------------------------------
+# Full chain test (timings + exit + anonymity + partitioned log)
+# ---------------------------------------------------
+async def test_proxy_chain_full(chain: List[ProxyInfo], samples: int = 5) -> Dict[str, Any]:
+    if not chain:
+        return {"success": False, "error": "Empty chain"}
+    if any(p.protocol not in ("http", "https") for p in chain):
+        return {"success": False, "error": "Manual CONNECT path supports http/https hops only"}
 
-    # Sidebar Configuration
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        
-        # Performance Settings
-        with st.expander("🎯 Performance", expanded=True):
-            st.session_state.settings["max_concurrent"] = st.slider(
-                "Concurrent Tests",
-                min_value=5,
-                max_value=100,
-                value=st.session_state.settings.get("max_concurrent", 50),
-                help="Balance speed vs resource usage"
-            )
-            
-            st.session_state.settings["timeout"] = st.slider(
-                "Timeout (seconds)",
-                min_value=5,
-                max_value=30,
-                value=st.session_state.settings.get("timeout", 10)
-            )
-            
-            st.session_state.settings["verify_ssl"] = st.checkbox(
-                "Verify SSL Certificates",
-                value=st.session_state.settings.get("verify_ssl", True),
-                help="Disable only for testing"
-            )
-        
-        # GitHub Integration
-        with st.expander("💾 GitHub Storage"):
-            st.info("Store proxies securely in GitHub Gist")
-            
-            # Use environment variable or input
-            token = os.getenv("GITHUB_TOKEN", "")
-            if not token:
-                token = st.text_input("GitHub Token", type="password", help="Create at github.com/settings/tokens")
-            
-            gist_id = st.text_input("Gist ID (optional)", help="Leave empty to create new")
-            
-            if token:
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    if st.button("💾 Save", use_container_width=True):
-                        working = [p for p in st.session_state.validated_proxies if p.is_valid]
-                        if working:
-                            new_id = SecureGistManager.save_to_gist(working, token, gist_id)
-                            if new_id:
-                                st.success(f"Saved {len(working)} proxies")
-                                st.code(f"ID: {new_id}")
-                
-                with col2:
-                    if st.button("📥 Load", use_container_width=True) and gist_id:
-                        loaded = SecureGistManager.load_from_gist(token, gist_id)
-                        if loaded:
-                            for proxy in loaded:
-                                session_manager.add_validated_proxy(proxy)
-                            st.success(f"Loaded {len(loaded)} proxies")
-        
-        # Quick Actions
-        st.markdown("---")
-        st.subheader("🎬 Quick Actions")
-        
-        if st.button("🚀 Harvest & Validate", type="primary", use_container_width=True):
-            with st.spinner("Fetching proxy lists..."):
-                all_proxies = []
-                progress = st.progress(0)
-                
-                sources = []
-                for category, urls in PROXY_SOURCES.items():
-                    sources.extend(urls)
-                
-                for i, url in enumerate(sources):
-                    proxy_dicts = fetch_proxies_cached(url, limit=500)
-                    # Safely convert dictionaries to Proxy objects
-                    for pd in proxy_dicts:
-                        proxy = create_proxy_from_dict(pd)
-                        if proxy:
-                            all_proxies.append(proxy)
-                    progress.progress((i + 1) / len(sources))
-                
-                # Deduplicate
-                unique_proxies = list(set(all_proxies))
-                session_manager.update_stats(total_fetched=st.session_state.stats["total_fetched"] + len(unique_proxies))
-                
-                st.success(f"Fetched {len(unique_proxies)} unique proxies")
-                
-                # Validate
-                if unique_proxies:
-                    progress_bar = st.progress(0)
-                    progress_counter = {"count": 0}
-                    
-                    def update_progress(count):
-                        progress_counter["count"] += count
-                        progress_bar.progress(min(progress_counter["count"] / len(unique_proxies), 1.0))
-                    
-                    with st.spinner(f"Validating {len(unique_proxies)} proxies..."):
-                        valid_proxies = run_async_validation(
-                            unique_proxies,
-                            max_concurrent=st.session_state.settings["max_concurrent"],
-                            verify_ssl=st.session_state.settings["verify_ssl"],
-                            progress_callback=update_progress
-                        )
-                        
-                        # Update stats
-                        session_manager.update_stats(
-                            total_validated=st.session_state.stats["total_validated"] + len(unique_proxies),
-                            total_working=st.session_state.stats["total_working"] + len(valid_proxies),
-                            last_validation=datetime.now()
-                        )
-                        
-                        # Add to validated list
-                        for proxy in valid_proxies:
-                            session_manager.add_validated_proxy(proxy)
-                        
-                        st.success(f"✅ Found {len(valid_proxies)} working proxies!")
-        
-        if st.button("🧹 Optimize Memory", use_container_width=True):
-            # Keep only best proxies
-            working = [p for p in st.session_state.validated_proxies if p.is_valid]
-            working.sort(key=lambda p: p.reliability_score, reverse=True)
-            st.session_state.validated_proxies = deque(working[:500], maxlen=1000)
-            st.success(f"Optimized! Kept best {len(st.session_state.validated_proxies)} proxies")
-        
-        if st.button("🗑️ Clear All", use_container_width=True):
-            st.session_state.validated_proxies.clear()
-            st.session_state.proxy_buffer = []
-            st.session_state.known_good_proxies.clear()
-            st.session_state.stats = {
-                "total_fetched": 0,
-                "total_validated": 0,
-                "total_working": 0,
-                "last_validation": None,
-                "success_rate": 0.0
+    hop_timings_samples: List[List[float]] = [[] for _ in chain]
+    total_samples: List[float] = []
+    t0_all = time.perf_counter_ns()
+
+    try:
+        for _ in range(samples):
+            start_total = time.perf_counter_ns()
+            for i in range(len(chain)):
+                leg_start = time.perf_counter_ns()
+                dest_host = chain[i + 1].host if i < len(chain) - 1 else "api.ipify.org"
+                dest_port = chain[i + 1].port if i < len(chain) - 1 else 443
+                use_tls = (i == len(chain) - 1)
+                rd, wr = await _connect_via_chain_http_connect(chain[:i + 1], dest_host, dest_port, use_tls)
+                wr.close()
+                try: await wr.wait_closed()
+                except Exception: pass
+                dur_ms = _ns_to_ms(time.perf_counter_ns() - leg_start)
+                hop_timings_samples[i].append(dur_ms)
+                METRIC_HOP_MS.observe(dur_ms)
+            total_samples.append(_ns_to_ms(time.perf_counter_ns() - start_total))
+
+        hop_stats = []
+        for i, s in enumerate(hop_timings_samples):
+            stats_i = compute_stats(s)
+            stats_i["jitter"] = compute_rfc3550_jitter(s)
+            hop_stats.append({"hop": i + 1, **{k: round(v, 2) for k, v in stats_i.items()}})
+        total_stats = compute_stats(total_samples)
+        METRIC_CHAIN_TEST.observe(total_stats.get("mean", 0.0))
+
+        # Build full tunnel once and fetch exit IP and anonymity headers
+        rd, wr = await _connect_via_chain_http_connect(chain, "httpbin.org", 443, True)
+        # headers endpoint gives us response + reflected headers
+        req = b"GET /headers HTTP/1.1\r\nHost: httpbin.org\r\nConnection: close\r\n\r\n"
+        wr.write(req); await wr.drain()
+        raw = await rd.read(-1)
+        wr.close()
+        try: await wr.wait_closed()
+        except Exception: pass
+        hdr_json = {}
+        try:
+            _, _, body = raw.partition(b"\r\n\r\n")
+            jpos = body.find(b"{")
+            if jpos >= 0:
+                hdr_json = json.loads(body[jpos:].decode("utf-8", errors="ignore"))
+        except Exception:
+            pass
+
+        # also fetch exit ip quickly
+        rd2, wr2 = await _connect_via_chain_http_connect(chain, "api.ipify.org", 443, True)
+        req2 = b"GET /?format=json HTTP/1.1\r\nHost: api.ipify.org\r\nConnection: close\r\n\r\n"
+        wr2.write(req2); await wr2.drain()
+        body2 = await rd2.read(-1)
+        wr2.close()
+        try: await wr2.wait_closed()
+        except Exception: pass
+        exit_ip = None
+        try:
+            j2 = body2.find(b"{")
+            if j2 >= 0: exit_ip = json.loads(body2[j2:].decode("utf-8", errors="ignore")).get("ip")
+        except Exception:
+            pass
+
+        # Basic anonymity signals from response headers (if any proxies injected)
+        # Note: Via/X-Forwarded-For may appear in response headers; httpbin returns request headers in JSON.
+        req_headers = (hdr_json.get("headers") or {}) if isinstance(hdr_json, dict) else {}
+        anonymity = {
+            "via_header": req_headers.get("Via"),
+            "x_forwarded_for": req_headers.get("X-Forwarded-For"),
+            "forwarded": req_headers.get("Forwarded"),
+            "proxy_connection": req_headers.get("Proxy-Connection"),
+        }
+
+        # Log into monthly partition
+        table = ensure_month_partition("chain_tests")
+        conn = sqlite3.connect(DB_PATH)
+        cur = conn.cursor()
+        cur.execute(f"""
+            INSERT INTO {table} (tested_at, exit_ip, total_latency, hop_timings_json, stats_json, anonymity_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.utcnow(),
+            exit_ip,
+            total_stats.get("mean", 0.0),
+            json.dumps(hop_stats),
+            json.dumps(total_stats),
+            json.dumps(anonymity)
+        ))
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "exit_ip": exit_ip,
+            "hop_stats": hop_stats,
+            "total_stats": {k: round(v, 2) for k, v in total_stats.items()},
+            "anonymity": anonymity,
+            "hop_count": len(chain),
+        }
+    except Exception as e:
+        return {"success": False, "error": f"Chain failed: {str(e)[:200]}"}
+
+# ---------------------------------------------------
+# Real browsing via pooled, mixed-protocol chain + TLS pinning + exit consensus
+# ---------------------------------------------------
+async def to_httpx_via_aio(session: aiohttp.ClientSession) -> httpx.AsyncClient:
+    class _AioTransport(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            async with session.request(
+                method=request.method,
+                url=str(request.url),
+                headers=request.headers,
+                data=request.content
+            ) as r:
+                content = await r.read()
+                return httpx.Response(status_code=r.status, headers=r.headers, content=content, request=request)
+    return httpx.AsyncClient(transport=_AioTransport(), timeout=15.0)
+
+def _sha256_b64(cert_der: bytes) -> str:
+    import hashlib, base64
+    h = hashlib.sha256(cert_der).digest()
+    return "sha256:" + base64.b64encode(h).decode()
+
+async def fetch_via_chain(chain: List[ProxyInfo], url: str, timeout: int = 25) -> Dict[str, Any]:
+    if not url.lower().startswith(("http://", "https://")):
+        return {"success": False, "error": "Only HTTP/HTTPS URLs allowed"}
+    if not rate_limiter.allow("fetch:global"):
+        return {"success": False, "error": "Rate limited"}
+
+    urls = [p.as_url() for p in chain]
+    try:
+        connector = ChainProxyConnector.from_urls(urls)
+        timeout_cfg = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout_cfg) as session:
+            # Exit-IP consensus via the chain
+            httpx_via = await to_httpx_via_aio(session)
+            ip_consensus = None
+            try:
+                ip_consensus = await exit_ip_consensus_via_session(session=httpx_via)
+            except Exception:
+                pass
+
+            async with session.get(url, headers={"User-Agent": "ProxyStream/1.0"}) as resp:
+                # TLS pinning check (optional)
+                host = aiohttp.helpers.URL(url).host
+                pin = CERT_PINS.get(host)
+                if pin and resp.connection and resp.connection.transport:
+                    ssl_obj = resp.connection.transport.get_extra_info("ssl_object")
+                    if ssl_obj:
+                        cert_bin = ssl_obj.getpeercert(binary_form=True)
+                        fp = _sha256_b64(cert_bin)
+                        if fp != pin:
+                            return {"success": False, "error": f"TLS pin mismatch for {host}: {fp}"}
+
+                body = await resp.text(errors="ignore")
+                # anonymity via response headers
+                via = resp.headers.get("Via")
+                xff = resp.headers.get("X-Forwarded-For")
+                fwd = resp.headers.get("Forwarded")
+                pconn = resp.headers.get("Proxy-Connection")
+
+                METRIC_FETCH_OK.inc()
+                return {
+                    "success": True,
+                    "status_line": f"HTTP/{resp.version.major}.{resp.version.minor} {resp.status} {resp.reason}",
+                    "status_code": resp.status,
+                    "body_preview": body[:4096],
+                    "bytes": len(body.encode("utf-8", errors="ignore")),
+                    "exit_ip_consensus": ip_consensus,
+                    "resp_proxy_headers": {"Via": via, "X-Forwarded-For": xff, "Forwarded": fwd, "Proxy-Connection": pconn}
+                }
+    except Exception as e:
+        METRIC_FETCH_ERR.inc()
+        return {"success": False, "error": str(e)[:200]}
+
+# ---------------------------------------------------
+# Browser geolocation with fallback
+# ---------------------------------------------------
+def capture_client_geo():
+    components.html(
+        """
+        <script>
+        (async () => {
+          async function ipFallback(){
+            try{
+              const r = await fetch('https://ipapi.co/json/');
+              if(!r.ok) throw new Error('ipapi failure');
+              return await r.json();
+            }catch(e){
+              return { city: 'Unknown', country: 'Unknown', country_code: '', ip: '0.0.0.0' };
             }
+          }
+          function send(val){
+            const py = window.parent;
+            py.postMessage({isStreamlitMessage: true, type: 'streamlit:setComponentValue', args: {value: val}}, '*');
+          }
+          try{
+            if (navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(async (pos) => {
+                const { latitude, longitude, accuracy } = pos.coords;
+                let base = await ipFallback();
+                base.latitude = latitude; base.longitude = longitude; base.accuracy = accuracy;
+                send(base);
+              }, async () => {
+                const d = await ipFallback(); send(d);
+              }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 });
+            } else {
+              const d = await ipFallback(); send(d);
+            }
+          }catch(e){
+            const d = await ipFallback(); send(d);
+          }
+        })();
+        </script>
+        """,
+        height=0
+    )
+
+# ---------------------------------------------------
+# Streamlit UI
+# ---------------------------------------------------
+st.markdown("""
+<style>
+    .main { padding-top: 0; }
+    .block-container { padding: 1rem; }
+    h1 { color: #2563eb; font-weight: 700; }
+    .stTabs [data-baseweb="tab"] { padding: 8px 16px; }
+    .stTabs [aria-selected="true"] { background: #3b82f6; color: white; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🔒 ProxyStream Advanced - True Multi-Hop Chain System")
+
+# Top row controls
+col1, col2, col3, col4 = st.columns(4)
+with col1:
+    if st.button("📍 Detect My Location", use_container_width=True):
+        capture_client_geo()
+        with st.spinner("Getting browser location..."):
+            async def get_location():
+                async with httpx.AsyncClient(timeout=10) as client:
+                    r = await client.get("https://ipapi.co/json/")
+                    return r.json() if r.status_code == 200 else {}
+            # unified runner
+            try:
+                loop = asyncio.get_running_loop()
+                location = loop.run_until_complete(get_location())  # in Streamlit this usually raises
+            except RuntimeError:
+                location = asyncio.run(get_location())
+            st.session_state.client_location = location or {"city": "Unknown", "country_code": "", "ip": "0.0.0.0"}
+            st.success("Location detected!")
             st.rerun()
 
-    # Main Content Tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Proxy List", "➕ Add Proxies", "📊 Analytics", "🌍 Geo Test", "📚 Help"])
+if st.session_state.client_location:
+    loc = st.session_state.client_location
+    with col2: st.metric("Your Location", f"{loc.get('city', 'Unknown')}, {loc.get('country_code', '')}")
+    with col3: st.metric("Your IP", loc.get('ip', 'Unknown'))
+    with col4: st.metric("Accuracy (m)", f"{int(loc.get('accuracy', 0))}" if loc.get('accuracy') else "N/A")
 
-    with tab1:
-        render_proxy_table()
+# Sidebar
+with st.sidebar:
+    st.header("🎛️ Control Panel")
 
-    with tab2:
-        render_proxy_input()
-        
-        st.markdown("---")
-        
-        st.subheader("🌐 Batch Import from URL")
-        url_input = st.text_input("Custom proxy list URL:", placeholder="https://example.com/proxies.txt")
-        
-        if url_input and st.button("📥 Import & Validate"):
-            with st.spinner("Importing..."):
-                proxy_dicts = fetch_proxies_cached(url_input, limit=1000)
-                if proxy_dicts:
-                    proxies = []
-                    for pd in proxy_dicts:
-                        proxy = create_proxy_from_dict(pd)
-                        if proxy:
-                            proxies.append(proxy)
-                    
-                    if proxies:
-                        st.info(f"Found {len(proxies)} proxies, validating...")
-                        
-                        valid = run_async_validation(
-                            proxies,
-                            max_concurrent=st.session_state.settings["max_concurrent"],
-                            verify_ssl=st.session_state.settings["verify_ssl"]
-                        )
-                        
-                        for proxy in valid:
-                            session_manager.add_validated_proxy(proxy)
-                        
-                        st.success(f"Added {len(valid)} working proxies!")
+    # Load Proxies
+    st.subheader("📥 Load Proxies")
+    if st.button("🔄 Fetch from GitHub Sources", use_container_width=True):
+        with st.spinner("Fetching from sources..."):
+            all_proxies: List[ProxyInfo] = []
+            for i, src in enumerate(PROXY_SOURCES):
+                st.text(f"Loading {src.split('/')[-1]}...")
+                try:
+                    proxies = asyncio.run(fetch_and_parse_proxies(src))
+                except RuntimeError:
+                    proxies = asyncio.get_event_loop().run_until_complete(fetch_and_parse_proxies(src))
+                all_proxies.extend(proxies)
+                if i == 0: st.info(f"✅ Proxy-Hound: {len(proxies)} proxies")
+            unique = list({p: None for p in all_proxies}.keys())
+            st.session_state.proxies_raw = unique
+            st.success(f"Loaded {len(unique)} unique proxies")
+
+    # Validation
+    if st.session_state.proxies_raw:
+        st.subheader("✅ Validate")
+        validate_count = st.slider("Number to validate:", 10, 150, 40)
+        if st.button("🧪 Validate Proxies", use_container_width=True):
+            with st.spinner(f"Validating {validate_count} proxies..."):
+                sample = st.session_state.proxies_raw[:validate_count]
+                try:
+                    validated = asyncio.run(load_and_validate_batch(sample))
+                except RuntimeError:
+                    validated = asyncio.get_event_loop().run_until_complete(load_and_validate_batch(sample))
+                st.session_state.proxies_validated.extend(validated)
+                st.success(f"✅ {len(validated)} working proxies validated")
+
+    # Search/Filter
+    st.subheader("🔍 Search & Filter")
+    filters = {
+        'country': st.text_input("Country", placeholder="US, Germany..."),
+        'asn': st.text_input("ASN", placeholder="AS12345"),
+        'ip': st.text_input("IP", placeholder="1.2.3 or 2a03:..."),
+        'protocol': st.selectbox("Protocol", ["", "http", "https", "socks4", "socks5"])
+    }
+    if st.button("🔍 Search Database", use_container_width=True):
+        filtered = {k: v for k, v in filters.items() if v}
+        results = load_proxies_from_db(filtered)
+        st.session_state.proxies_validated = results
+        st.success(f"Found {len(results)} proxies")
+
+    # Chain Builder (2-5 hops)
+    st.subheader("🔗 Chain Builder (2-5 hops)")
+    if st.session_state.proxies_validated:
+        countries: Dict[str, List[ProxyInfo]] = {}
+        for proxy in st.session_state.proxies_validated:
+            key = proxy.country or "Unknown"
+            countries.setdefault(key, []).append(proxy)
+        selected_country = st.selectbox("Country", list(countries.keys()))
+        if selected_country:
+            country_proxies = countries[selected_country][:30]
+            proxy_display = [
+                f"{p.protocol}://{p.host}:{p.port} | ASN:{p.asn or 'N/A'} | {p.latency:.0f}ms"
+                for p in country_proxies
+            ]
+            selected_proxy_str = st.selectbox("Proxy", proxy_display)
+            if st.button("➕ Add to Chain"):
+                idx = proxy_display.index(selected_proxy_str)
+                proxy = country_proxies[idx]
+                if len(st.session_state.proxy_chain) < 5:
+                    st.session_state.proxy_chain.append(proxy)
+                    st.success(f"Added hop {len(st.session_state.proxy_chain)}")
+                else:
+                    st.error("Maximum 5 hops")
+
+    # Current Chain block
+    if st.session_state.proxy_chain:
+        st.write(f"**Chain ({len(st.session_state.proxy_chain)} hops):**")
+        colors = ['🔵', '🟢', '🟡', '🟠', '🟣']
+        for i, p in enumerate(st.session_state.proxy_chain):
+            auth = " (auth)" if p.username else ""
+            st.write(f"{colors[i]} {p.protocol}://{p.host}:{p.port}{auth} ({p.country_code or '??'})")
+
+        if len(st.session_state.proxy_chain) >= 2:
+            if st.button("🧪 Test Chain", use_container_width=True):
+                with st.spinner("Testing full multi-hop chain..."):
+                    try:
+                        result = asyncio.run(test_proxy_chain_full(st.session_state.proxy_chain))
+                    except RuntimeError:
+                        result = asyncio.get_event_loop().run_until_complete(test_proxy_chain_full(st.session_state.proxy_chain))
+                    st.session_state.chain_test_result = result
+                    if result["success"]:
+                        st.success("✅ Chain valid!")
+                        st.metric("Exit IP", result.get('exit_ip') or "N/A")
+                        ts = result.get('total_stats', {})
+                        st.metric("Total Mean Latency", f"{ts.get('mean', 0):.0f}ms")
                     else:
-                        st.warning("No valid proxies found in the URL")
+                        st.error(f"❌ {result['error']}")
 
-    with tab3:
-        st.subheader("📊 Analytics Dashboard")
-        
-        if st.session_state.validated_proxies:
-            working_proxies = [p for p in st.session_state.validated_proxies if p.is_valid]
-            
-            if working_proxies:
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    # Protocol distribution
-                    protocol_counts = defaultdict(int)
-                    for p in working_proxies:
-                        # Handle both enum and string protocols
-                        if isinstance(p.protocol, ProxyProtocol):
-                            protocol_name = p.protocol.value.upper()
-                        else:
-                            protocol_name = str(p.protocol).upper()
-                        protocol_counts[protocol_name] += 1
-                    
-                    if protocol_counts:
-                        df_proto = pd.DataFrame(
-                            list(protocol_counts.items()),
-                            columns=["Protocol", "Count"]
-                        )
-                        fig = px.pie(df_proto, values="Count", names="Protocol", 
-                                   title="Protocol Distribution",
-                                   color_discrete_sequence=px.colors.qualitative.Set3)
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                with col2:
-                    # Latency distribution
-                    latencies = [p.latency for p in working_proxies if p.latency]
-                    if latencies:
-                        df_latency = pd.DataFrame({"Latency (ms)": latencies})
-                        fig = px.histogram(df_latency, x="Latency (ms)", 
-                                         nbins=20, 
-                                         title="Latency Distribution",
-                                         color_discrete_sequence=["#636EFA"])
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                # Reliability scores
-                st.subheader("🎯 Top Performers")
-                top_proxies = sorted(working_proxies, key=lambda p: p.reliability_score, reverse=True)[:10]
-                
-                reliability_data = []
-                for p in top_proxies:
-                    reliability_data.append({
-                        "Proxy": f"{p.host}:{p.port}",
-                        "Score": p.reliability_score,
-                        "Latency": p.latency or 0
-                    })
-                
-                df_reliability = pd.DataFrame(reliability_data)
-                fig = px.bar(df_reliability, x="Proxy", y="Score", 
-                            title="Top 10 Most Reliable Proxies",
-                            color="Latency",
-                            color_continuous_scale="Viridis")
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No data available. Start by harvesting and validating proxies!")
+        if st.button("🗑️ Clear Chain", use_container_width=True):
+            st.session_state.proxy_chain = []
+            st.session_state.chain_test_result = None
+            st.rerun()
 
-    with tab4:
-        st.subheader("🌍 Geo-Restriction & Firewall Testing")
-        
-        st.info("Test if proxies can access content behind country firewalls and geo-restrictions")
-        
-        # Test configuration
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Select Test Type**")
-            test_type = st.selectbox(
-                "Test Category",
-                [
-                    "🌐 General Geo Test",
-                    "🇨🇳 China Great Firewall",
-                    "🇷🇺 Russia RKN",
-                    "🇮🇷 Iran Firewall",
-                    "🇹🇷 Turkey Blocks",
-                    "🎬 Streaming Services",
-                    "📱 Social Media",
-                    "🏦 Banking/Finance",
-                    "Custom URL"
-                ]
-            )
-            
-            # Proxy selection
-            if st.session_state.validated_proxies:
-                working_proxies = [p for p in st.session_state.validated_proxies if p.is_valid]
-                if working_proxies:
-                    proxy_options = []
-                    for p in working_proxies[:50]:
-                        # Handle both enum and string protocols
-                        if isinstance(p.protocol, ProxyProtocol):
-                            protocol_str = p.protocol.value
-                        else:
-                            protocol_str = str(p.protocol).lower()
-                        proxy_options.append(f"{protocol_str}://{p.host}:{p.port}")
-                        
-                    selected_proxy_str = st.selectbox(
-                        "Select Proxy to Test",
-                        ["None (Direct Connection)"] + proxy_options
+# Tabs
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🗺️ Chain Visualization",
+    "📊 Proxy List",
+    "🌐 Browse via Chain",
+    "📈 Analytics"
+])
+
+with tab1:
+    st.subheader("Multi-Hop Chain Routing Visualization")
+    if st.session_state.proxy_chain and len(st.session_state.proxy_chain) >= 2:
+        fig = go.Figure()
+        lats, lons = [], []
+
+        if st.session_state.client_location:
+            cl = st.session_state.client_location
+            lats.append(cl.get('latitude', 0) or 0); lons.append(cl.get('longitude', 0) or 0)
+            fig.add_trace(go.Scattermapbox(
+                mode='markers+text', lon=[lons[0]], lat=[lats[0]], marker=dict(size=15),
+                text="You", name="Your Location", showlegend=True
+            ))
+
+        for i, p in enumerate(st.session_state.proxy_chain):
+            if p.lat and p.lon:
+                lats.append(p.lat); lons.append(p.lon)
+                fig.add_trace(go.Scattermapbox(
+                    mode='markers+text', lon=[p.lon], lat=[p.lat], marker=dict(size=12),
+                    text=f"Hop {i+1}", name=f"Hop {i+1}: {p.country or 'Unknown'}",
+                    hovertemplate=(
+                        f"<b>Hop {i+1}</b><br>"
+                        f"IP: {p.host}:{p.port}<br>Protocol: {p.protocol}<br>"
+                        f"Loc: {p.city or 'N/A'}, {p.country or 'N/A'}<br>"
+                        f"ASN: {p.asn or 'N/A'}<br>ISP: {p.isp or p.org or 'N/A'}<br>"
+                        f"Latency: {p.latency:.0f}ms" if p.latency else "Latency: N/A"
                     )
-                else:
-                    selected_proxy_str = "None (Direct Connection)"
-                    st.warning("No working proxies available")
-            else:
-                selected_proxy_str = "None (Direct Connection)"
-                st.warning("No proxies available. Validate some first!")
-        
-        with col2:
-            st.write("**Test Configuration**")
-            
-            # Test targets based on selection
-            test_targets = {
-                "🌐 General Geo Test": [
-                    ("https://www.google.com", "Google"),
-                    ("https://www.youtube.com", "YouTube"),
-                    ("https://www.facebook.com", "Facebook"),
-                    ("https://www.twitter.com", "Twitter"),
-                    ("https://www.wikipedia.org", "Wikipedia"),
-                    ("https://www.bbc.com", "BBC"),
-                ],
-                "🇨🇳 China Great Firewall": [
-                    ("https://www.google.com", "Google"),
-                    ("https://www.youtube.com", "YouTube"),
-                    ("https://www.facebook.com", "Facebook"),
-                    ("https://www.twitter.com", "Twitter (X)"),
-                    ("https://www.instagram.com", "Instagram"),
-                    ("https://www.nytimes.com", "NY Times"),
-                    ("https://www.wsj.com", "Wall Street Journal"),
-                ],
-                "🇷🇺 Russia RKN": [
-                    ("https://www.facebook.com", "Facebook/Meta"),
-                    ("https://www.instagram.com", "Instagram"),
-                    ("https://www.twitter.com", "Twitter (X)"),
-                    ("https://www.linkedin.com", "LinkedIn"),
-                    ("https://www.bbc.com", "BBC"),
-                    ("https://www.svoboda.org", "Radio Liberty"),
-                ],
-                "🇮🇷 Iran Firewall": [
-                    ("https://www.facebook.com", "Facebook"),
-                    ("https://www.twitter.com", "Twitter"),
-                    ("https://www.youtube.com", "YouTube"),
-                    ("https://www.telegram.org", "Telegram"),
-                    ("https://www.bbc.com", "BBC Persian"),
-                ],
-                "🇹🇷 Turkey Blocks": [
-                    ("https://www.wikipedia.org", "Wikipedia"),
-                    ("https://www.imgur.com", "Imgur"),
-                    ("https://www.reddit.com", "Reddit"),
-                    ("https://www.twitter.com", "Twitter/X"),
-                ],
-                "🎬 Streaming Services": [
-                    ("https://www.netflix.com", "Netflix"),
-                    ("https://www.hulu.com", "Hulu"),
-                    ("https://www.disney.com", "Disney+"),
-                    ("https://www.hbomax.com", "HBO Max"),
-                    ("https://www.peacocktv.com", "Peacock"),
-                    ("https://www.bbc.co.uk/iplayer", "BBC iPlayer"),
-                ],
-                "📱 Social Media": [
-                    ("https://www.tiktok.com", "TikTok"),
-                    ("https://www.snapchat.com", "Snapchat"),
-                    ("https://www.pinterest.com", "Pinterest"),
-                    ("https://www.tumblr.com", "Tumblr"),
-                    ("https://www.reddit.com", "Reddit"),
-                ],
-                "🏦 Banking/Finance": [
-                    ("https://www.paypal.com", "PayPal"),
-                    ("https://www.coinbase.com", "Coinbase"),
-                    ("https://www.binance.com", "Binance"),
-                    ("https://www.robinhood.com", "Robinhood"),
-                ],
-            }
-            
-            if test_type == "Custom URL":
-                custom_url = st.text_input("Enter URL to test:", placeholder="https://example.com")
-                test_timeout = st.slider("Timeout (seconds)", 5, 30, 10)
-            else:
-                targets = test_targets.get(test_type, [])
-                selected_targets = st.multiselect(
-                    "Select sites to test:",
-                    [name for _, name in targets],
-                    default=[name for _, name in targets[:3]]
+                ))
+
+        # Exit point if tested
+        if st.session_state.chain_test_result and st.session_state.chain_test_result.get("success"):
+            exit_ip = st.session_state.chain_test_result.get("exit_ip")
+            if exit_ip:
+                try:
+                    exit_geo = asyncio.run(get_proxy_geo_with_asn(exit_ip))
+                except RuntimeError:
+                    exit_geo = asyncio.get_event_loop().run_until_complete(get_proxy_geo_with_asn(exit_ip))
+                if exit_geo.get('lat') and exit_geo.get('lon'):
+                    fig.add_trace(go.Scattermapbox(
+                        mode='markers', lon=[exit_geo['lon']], lat=[exit_geo['lat']],
+                        marker=dict(size=15, symbol='star'), name=f"Exit: {exit_ip}",
+                        hovertext=f"Exit IP: {exit_ip}<br>{exit_geo.get('city')}, {exit_geo.get('country')}"
+                    ))
+                    lats.append(exit_geo['lat']); lons.append(exit_geo['lon'])
+
+        if len(lats) > 1:
+            for i in range(len(lats) - 1):
+                fig.add_trace(go.Scattermapbox(
+                    mode='lines', lon=[lons[i], lons[i+1]], lat=[lats[i], lats[i+1]],
+                    line=dict(width=3), showlegend=False
+                ))
+
+        fig.update_layout(
+            mapbox=dict(style="open-street-map",
+                        center=dict(lon=lons[0] if lons else 0, lat=lats[0] if lats else 0),
+                        zoom=2),
+            showlegend=True, height=600, margin=dict(r=0, t=0, l=0, b=0)
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Hop stats
+        res = st.session_state.chain_test_result
+        if res and res.get("hop_stats"):
+            st.write("**Per-Hop Stats (ms):**")
+            for hs in res["hop_stats"]:
+                st.write(
+                    f"Hop {hs['hop']}: mean={hs['mean']}, p50={hs['p50']}, p95={hs['p95']}, "
+                    f"p99={hs['p99']}, stdev={hs['stdev']}, jitter={hs['jitter']}"
                 )
-                test_timeout = st.slider("Timeout (seconds)", 5, 30, 10)
-        
-        # Run test button
-        if st.button("🧪 Run Geo Test", type="primary", use_container_width=True):
-            if test_type == "Custom URL" and not custom_url:
-                st.error("Please enter a URL to test")
-            else:
-                # Prepare test parameters
-                test_proxy = None
-                if selected_proxy_str != "None (Direct Connection)" and working_proxies:
-                    # Find the proxy object
-                    for p in working_proxies:
-                        # Handle both enum and string protocols
-                        if isinstance(p.protocol, ProxyProtocol):
-                            protocol_str = p.protocol.value
-                        else:
-                            protocol_str = str(p.protocol).lower()
-                        
-                        if f"{protocol_str}://{p.host}:{p.port}" == selected_proxy_str:
-                            test_proxy = p
-                            break
-                
-                # Get URLs to test
-                if test_type == "Custom URL":
-                    urls_to_test = [(custom_url, "Custom URL")]
-                else:
-                    all_targets = test_targets.get(test_type, [])
-                    urls_to_test = [(url, name) for url, name in all_targets if name in selected_targets]
-                
-                if not urls_to_test:
-                    st.error("Please select at least one site to test")
-                else:
-                    # Run tests
-                    st.write("---")
-                    st.subheader("📊 Test Results")
-                    
-                    test_results = []
-                    
-                    for i, (url, name) in enumerate(urls_to_test):
-                        with st.spinner(f"Testing {name}..."):
-                            # Test with proxy
-                            try:
-                                start_time = time.time()
-                                
-                                if test_proxy:
-                                    proxy_dict = {
-                                        'http': test_proxy.url,
-                                        'https': test_proxy.url
-                                    }
-                                else:
-                                    proxy_dict = None
-                                
-                                response = httpx.get(
-                                    url,
-                                    proxies=proxy_dict,
-                                    timeout=test_timeout,
-                                    follow_redirects=True,
-                                    verify=False
-                                )
-                                
-                                elapsed = (time.time() - start_time) * 1000
-                                
-                                # Check response
-                                if response.status_code == 200:
-                                    status = "✅ Accessible"
-                                elif response.status_code == 403:
-                                    status = "🚫 Forbidden (403)"
-                                else:
-                                    status = f"⚠️ HTTP {response.status_code}"
-                                
-                                test_results.append({
-                                    "Site": name,
-                                    "Status": status,
-                                    "Response Time": f"{elapsed:.0f}ms",
-                                    "Status Code": response.status_code
-                                })
-                                
-                            except httpx.TimeoutException:
-                                test_results.append({
-                                    "Site": name,
-                                    "Status": "⏱️ Timeout",
-                                    "Response Time": f">{test_timeout}s",
-                                    "Status Code": "N/A"
-                                })
-                            except Exception as e:
-                                test_results.append({
-                                    "Site": name,
-                                    "Status": f"❌ Error",
-                                    "Response Time": "N/A",
-                                    "Status Code": "N/A"
-                                })
-                    
-                    # Display results
-                    df_results = pd.DataFrame(test_results)
-                    st.dataframe(df_results, use_container_width=True, hide_index=True)
+        if res and res.get("anonymity"):
+            st.write("**Anonymity Signals:** ", res["anonymity"])
+    else:
+        st.info("Build a chain with at least 2 hops to visualize routing")
 
-    with tab5:
-        st.subheader("📚 User Guide")
-        
-        with st.expander("🚀 Quick Start", expanded=True):
-            st.markdown("""
-            1. **Click "Harvest & Validate"** in the sidebar to automatically fetch and test proxies
-            2. **View results** in the Proxy List tab
-            3. **Export** your validated proxies as CSV, JSON, or plain text
-            4. **Save to GitHub** for permanent storage (requires GitHub token)
-            """)
-        
-        with st.expander("🔒 Security Best Practices"):
-            st.markdown("""
-            - **Always use HTTPS endpoints** when possible
-            - **Keep SSL verification enabled** in production
-            - **Don't share your GitHub token** - use environment variables
-            - **Regularly update** your proxy lists
-            - **Monitor success rates** to identify failing proxies
-            """)
-        
-        with st.expander("⚡ Performance Tips"):
-            st.markdown("""
-            - **Increase concurrent tests** for faster validation (uses more resources)
-            - **Use "Optimize Memory"** when the list gets large
-            - **Export and clear** old data regularly
-            - **Cache results** using GitHub Gist for persistence
-            - **Filter by reliability** to get the best proxies
-            """)
+with tab2:
+    st.subheader("Validated Proxies with ASN Data")
+    if st.session_state.proxies_validated:
+        data = [{
+            'Host': p.host, 'Port': p.port, 'Protocol': p.protocol,
+            'Auth': 'Yes' if p.username else 'No',
+            'Country': p.country or 'Unknown', 'City': p.city or 'Unknown',
+            'ASN': p.asn or 'N/A', 'ISP/Org': p.isp or p.org or 'Unknown',
+            'Latency (ms)': f"{p.latency:.0f}" if p.latency else 'N/A'
+        } for p in st.session_state.proxies_validated]
+        df = pd.DataFrame(data)
+        st.dataframe(df, use_container_width=True, height=500)
+        csv = df.to_csv(index=False)
+        st.download_button("📥 Export CSV", csv, "proxies.csv", "text/csv")
+    else:
+        st.info("No validated proxies. Load and validate from sidebar.")
 
-    # Footer
-    st.markdown("---")
-    st.caption(f"ProxyStream Cloud Production | v1.0.1 (Fixed) | Last run: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    if st.session_state.stats.get("last_validation"):
-        st.caption(f"Last validation: {st.session_state.stats['last_validation'].strftime('%Y-%m-%d %H:%M:%S')}")
+with tab3:
+    st.subheader("Browse Web Through Full Chain (pooled HTTP/SOCKS)")
+    url = st.text_input("Enter URL:", placeholder="https://example.com")
+    if st.session_state.proxy_chain and len(st.session_state.proxy_chain) >= 2:
+        if st.button("🌐 Fetch via Chain", use_container_width=True):
+            if url:
+                with st.spinner("Fetching through full chain..."):
+                    try:
+                        result = asyncio.run(fetch_via_chain(st.session_state.proxy_chain, url))
+                    except RuntimeError:
+                        result = asyncio.get_event_loop().run_until_complete(fetch_via_chain(st.session_state.proxy_chain, url))
+                    if result.get("success"):
+                        st.success("✅ Fetched successfully!")
+                        st.write(f"**Status:** {result.get('status_line')}")
+                        st.write(f"**Size:** {result.get('bytes')} bytes")
+                        if result.get("exit_ip_consensus"):
+                            st.write(f"**Exit IP (consensus):** {result['exit_ip_consensus']}")
+                        if result.get("resp_proxy_headers"):
+                            st.write("**Response Proxy Headers:** ", result["resp_proxy_headers"])
+                        with st.expander("Preview"):
+                            st.text(result.get('body_preview', '')[:2000])
+                    else:
+                        st.error(f"❌ {result.get('error')}")
+    else:
+        st.warning("Build a chain with at least 2 hops first")
 
-except Exception as e:
-    st.error(f"Application error: {str(e)}")
-    st.info("Please check that all dependencies are installed: pip install streamlit pandas plotly httpx aiohttp aiohttp-socks nest-asyncio certifi")
-    logger.error(f"Main application error: {e}", exc_info=True)
+with tab4:
+    st.subheader("Analytics & Maintenance")
+    all_proxies = load_proxies_from_db()
+    if all_proxies:
+        col1, col2 = st.columns(2)
+        with col1:
+            countries = [p.country for p in all_proxies if p.country]
+            if countries:
+                country_counts = pd.Series(countries).value_counts().head(15)
+                fig = px.bar(x=country_counts.values, y=country_counts.index, orientation='h', title="Top 15 Countries")
+                st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            asns = [p.asn for p in all_proxies if p.asn]
+            if asns:
+                asn_counts = pd.Series(asns).value_counts().head(10)
+                fig = px.pie(values=asn_counts.values, names=asn_counts.index, title="Top 10 ASNs")
+                st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("**DB Maintenance**")
+    if st.button("Run downsampling (older than 30 days)"):
+        downsample_chain_tests(older_than_days=30)
+        st.success("Downsampling invoked.")
+
+st.markdown("---")
+st.caption("ProxyStream - Multi-hop CONNECT timing + pooled HTTP/SOCKS chaining, exit-IP consensus, ASN enrichment, TLS pinning, Prometheus metrics, and production-grade resilience.")
