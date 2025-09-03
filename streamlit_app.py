@@ -803,24 +803,23 @@ def run_async_validation(proxies: List[ProxyInfo], max_concurrent: int = 50,
 # UI Components
 # ---------------------------------------------------
 def render_logo():
-    """Render the ProxyStream logo"""
+    """Render the ProxyStream logo with fixed styling"""
     st.markdown("""
     <style>
         .main-header {
             padding: 1rem 0 2rem 0;
             margin-bottom: 2rem;
+            background-color: white !important;
         }
         .logo-title {
             font-size: 2.5rem;
             font-weight: 700;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            color: #0068c9 !important;
             text-align: center;
         }
         .tagline {
             text-align: center;
-            color: #6b7280;
+            color: #555555 !important;
             font-size: 1rem;
             margin-top: 0.5rem;
         }
